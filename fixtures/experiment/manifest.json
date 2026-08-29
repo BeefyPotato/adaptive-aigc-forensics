@@ -1,0 +1,35 @@
+{
+  "manifest_schema_version": "manifest-v1",
+  "sources": [
+    {
+      "source_id": "source-authentic-001",
+      "image_path": "images/authentic.ppm",
+      "authenticity_label": 0,
+      "split": "fixture",
+      "dataset": "checked-in-fixture",
+      "dataset_revision": "fixture-dataset-v1"
+    },
+    {
+      "source_id": "source-aigc-001",
+      "image_path": "images/synthetic.ppm",
+      "authenticity_label": 1,
+      "split": "fixture",
+      "dataset": "checked-in-fixture",
+      "dataset_revision": "fixture-dataset-v1"
+    }
+  ],
+  "variants": [
+    {
+      "source_id": "source-authentic-001",
+      "condition_family": "noise",
+      "corruption_parameters": {"sigma": 0.02},
+      "corruption_seed_offset": 0
+    },
+    {
+      "source_id": "source-aigc-001",
+      "condition_family": "noise",
+      "corruption_parameters": {"sigma": 0.02},
+      "corruption_seed_offset": 1
+    }
+  ]
+}

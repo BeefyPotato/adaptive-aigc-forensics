@@ -1,0 +1,13 @@
+{
+  "name": "adaptive-aigc-forensics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixture": "node ./src/cli.js run-fixture --config ./fixtures/experiment/config.json --output-dir ./artifacts/fixture",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
