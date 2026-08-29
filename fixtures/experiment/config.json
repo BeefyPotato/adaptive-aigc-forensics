@@ -6,7 +6,7 @@
   "preprocessing_version": "shared-preprocessing-v1",
   "checkpoint_revision": "fixture-rgb-v1",
   "artifact_schema_version": "artifact-v1",
-  "signal_feature_version": "fixture-signal-v1",
+  "signal_representation_version": "fixture-signal-v1",
   "manifest_path": "manifest.json",
   "model_bundle_path": "model_bundle.json",
   "numeric_tolerance": 1e-12

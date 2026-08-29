@@ -1,69 +1,22 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+
+import {
+  ContractError,
+  assertCompatible,
+  readJson,
+  requireFields,
+  requireNonemptyString,
+  requireNonnegativeInteger,
+  requireObject,
+  requirePositiveFiniteNumber,
+} from "./contract-validation.js";
+
+export { ContractError } from "./contract-validation.js";
 
 const EXPERIMENT_CONFIG_VERSION = "experiment-config-v1";
 const MODEL_BUNDLE_VERSION = "model-bundle-v1";
-
-export class ContractError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ContractError";
-  }
-}
-
-function requireObject(value, contractName) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new ContractError(`${contractName} must be a JSON object.`);
-  }
-  return value;
-}
-
-function requireFields(value, fields, contractName) {
-  const missing = fields.filter((field) => !(field in value));
-  if (missing.length > 0) {
-    throw new ContractError(`${contractName} is missing required field(s): ${missing.join(", ")}.`);
-  }
-}
-
-function requireNonemptyString(value, field, contractName) {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new ContractError(`${contractName}.${field} must be a non-empty string.`);
-  }
-}
-
-function requireNonnegativeInteger(value, field, contractName) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new ContractError(`${contractName}.${field} must be a non-negative safe integer.`);
-  }
-}
-
-function requirePositiveFiniteNumber(value, field, contractName) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new ContractError(`${contractName}.${field} must be a positive finite number.`);
-  }
-}
-
-function assertSupportedVersion(actual, expected, field, contractName) {
-  if (actual !== expected) {
-    throw new ContractError(
-      `${contractName}.${field} is incompatible: received ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}.`,
-    );
-  }
-}
-
-function readJson(path, contractName) {
-  let text;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch (error) {
-    throw new ContractError(`${contractName} could not be read from ${path}: ${error.message}`);
-  }
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new ContractError(`${contractName} at ${path} is not valid JSON: ${error.message}`);
-  }
-}
+const SUPPORTED_ARTIFACT_KIND = "expert-logits";
+const SUPPORTED_FUSION_VERSION = "equal-logit-v1";
 
 function canonicalize(value) {
   if (Array.isArray(value)) {
@@ -100,7 +53,7 @@ export class ExperimentConfig {
     "preprocessing_version",
     "checkpoint_revision",
     "artifact_schema_version",
-    "signal_feature_version",
+    "signal_representation_version",
     "manifest_path",
     "model_bundle_path",
     "numeric_tolerance",
@@ -115,7 +68,7 @@ export class ExperimentConfig {
       "preprocessing_version",
       "checkpoint_revision",
       "artifact_schema_version",
-      "signal_feature_version",
+      "signal_representation_version",
       "manifest_path",
       "model_bundle_path",
     ]) {
@@ -128,7 +81,7 @@ export class ExperimentConfig {
       "numeric_tolerance",
       "experiment configuration",
     );
-    assertSupportedVersion(
+    assertCompatible(
       value.config_schema_version,
       EXPERIMENT_CONFIG_VERSION,
       "config_schema_version",
@@ -144,7 +97,7 @@ export class ExperimentConfig {
         preprocessingVersion: value.preprocessing_version,
         checkpointRevision: value.checkpoint_revision,
         artifactSchemaVersion: value.artifact_schema_version,
-        signalFeatureVersion: value.signal_feature_version,
+        signalRepresentationVersion: value.signal_representation_version,
         manifestPath: value.manifest_path,
         modelBundlePath: value.model_bundle_path,
         numericTolerance: value.numeric_tolerance,
@@ -195,7 +148,7 @@ export function cacheKey(config, variantId, artifactKind) {
     checkpoint_revision: config.checkpointRevision,
     dataset_revision: config.datasetRevision,
     preprocessing_version: config.preprocessingVersion,
-    signal_feature_version: config.signalFeatureVersion,
+    signal_representation_version: config.signalRepresentationVersion,
     variant_id: variantId,
   });
 }
@@ -208,7 +161,7 @@ export function readModelBundle(path, config) {
     "artifact_schema_version",
     "preprocessing_version",
     "checkpoint_revision",
-    "signal_feature_version",
+    "signal_representation_version",
     "fusion_version",
     "numeric_tolerance",
   ];
@@ -217,7 +170,7 @@ export function readModelBundle(path, config) {
     requireNonemptyString(value[field], field, contractName);
   }
   requirePositiveFiniteNumber(value.numeric_tolerance, "numeric_tolerance", contractName);
-  assertSupportedVersion(
+  assertCompatible(
     value.bundle_schema_version,
     MODEL_BUNDLE_VERSION,
     "bundle_schema_version",
@@ -227,10 +180,16 @@ export function readModelBundle(path, config) {
     ["artifact_schema_version", config.artifactSchemaVersion],
     ["preprocessing_version", config.preprocessingVersion],
     ["checkpoint_revision", config.checkpointRevision],
-    ["signal_feature_version", config.signalFeatureVersion],
+    ["signal_representation_version", config.signalRepresentationVersion],
   ]) {
-    assertSupportedVersion(value[field], expected, field, contractName);
+    assertCompatible(value[field], expected, field, contractName);
   }
+  assertCompatible(
+    value.fusion_version,
+    SUPPORTED_FUSION_VERSION,
+    "fusion_version",
+    contractName,
+  );
   if (value.numeric_tolerance > config.numericTolerance) {
     throw new ContractError(
       `${contractName}.numeric_tolerance is incompatible: received ${value.numeric_tolerance}; maximum allowed by configuration is ${config.numericTolerance}.`,
@@ -242,45 +201,73 @@ export function readModelBundle(path, config) {
     artifactSchemaVersion: value.artifact_schema_version,
     preprocessingVersion: value.preprocessing_version,
     checkpointRevision: value.checkpoint_revision,
-    signalFeatureVersion: value.signal_feature_version,
+    signalRepresentationVersion: value.signal_representation_version,
     fusionVersion: value.fusion_version,
     numericTolerance: value.numeric_tolerance,
   });
 }
 
-export function readCacheArtifact(path, config) {
+export function readCacheArtifact(path, config, modelBundle) {
   const contractName = "cache artifact";
   const value = requireObject(readJson(path, contractName), contractName);
   const requiredFields = [
     "artifact_schema_version",
     "preprocessing_version",
     "checkpoint_revision",
-    "signal_feature_version",
+    "signal_representation_version",
     "variant_id",
     "artifact_kind",
     "cache_key",
     "rgb_logit",
     "signal_logit",
+    "fusion_version",
+    "pred",
   ];
   requireFields(value, requiredFields, contractName);
-  for (const field of requiredFields.slice(0, -2)) {
+  for (const field of [
+    "artifact_schema_version",
+    "preprocessing_version",
+    "checkpoint_revision",
+    "signal_representation_version",
+    "variant_id",
+    "artifact_kind",
+    "cache_key",
+    "fusion_version",
+  ]) {
     requireNonemptyString(value[field], field, contractName);
   }
-  for (const field of ["rgb_logit", "signal_logit"]) {
+  for (const field of ["rgb_logit", "signal_logit", "pred"]) {
     if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
       throw new ContractError(`${contractName}.${field} must be a finite number.`);
     }
+  }
+  if (value.pred < 0 || value.pred > 1) {
+    throw new ContractError(`${contractName}.pred must be in [0, 1].`);
   }
   for (const [field, expected] of [
     ["artifact_schema_version", config.artifactSchemaVersion],
     ["preprocessing_version", config.preprocessingVersion],
     ["checkpoint_revision", config.checkpointRevision],
-    ["signal_feature_version", config.signalFeatureVersion],
+    ["signal_representation_version", config.signalRepresentationVersion],
   ]) {
-    assertSupportedVersion(value[field], expected, field, contractName);
+    assertCompatible(value[field], expected, field, contractName);
   }
+  assertCompatible(value.artifact_kind, SUPPORTED_ARTIFACT_KIND, "artifact_kind", contractName);
+  requireObject(modelBundle, "expected model bundle metadata");
+  requireNonemptyString(
+    modelBundle.fusionVersion,
+    "fusionVersion",
+    "expected model bundle metadata",
+  );
+  assertCompatible(
+    modelBundle.fusionVersion,
+    SUPPORTED_FUSION_VERSION,
+    "fusionVersion",
+    "expected model bundle metadata",
+  );
+  assertCompatible(value.fusion_version, modelBundle.fusionVersion, "fusion_version", contractName);
   const expectedCacheKey = cacheKey(config, value.variant_id, value.artifact_kind);
-  assertSupportedVersion(value.cache_key, expectedCacheKey, "cache_key", contractName);
+  assertCompatible(value.cache_key, expectedCacheKey, "cache_key", contractName);
   return Object.freeze({ ...value });
 }
 

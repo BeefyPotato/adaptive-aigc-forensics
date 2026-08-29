@@ -3,7 +3,7 @@
   "artifact_schema_version": "artifact-v1",
   "preprocessing_version": "shared-preprocessing-v1",
   "checkpoint_revision": "fixture-rgb-v1",
-  "signal_feature_version": "fixture-signal-v1",
+  "signal_representation_version": "fixture-signal-v1",
   "fusion_version": "equal-logit-v1",
   "numeric_tolerance": 1e-12
 }

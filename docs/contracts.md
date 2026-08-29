@@ -14,7 +14,7 @@ The issue #2 fixture defines the minimum versioned records exchanged by the RGB,
 | `preprocessing_version` | Shared decode, corruption, and geometry contract. |
 | `checkpoint_revision` | Exact RGB expert revision expected by caches and the model bundle. |
 | `artifact_schema_version` | Cache and output compatibility version. |
-| `signal_feature_version` | Signal representation compatibility version. |
+| `signal_representation_version` | Signal representation compatibility version. |
 | `manifest_path` | Manifest path relative to the configuration file. |
 | `model_bundle_path` | Model-bundle metadata path relative to the configuration file. |
 | `numeric_tolerance` | Maximum accepted cross-machine prediction difference. |
@@ -33,16 +33,16 @@ Issue #2 intentionally implements only the checked-in `noise` corruption fixture
 
 Each `artifact-v1` expert-logit cache record contains:
 
-- artifact, preprocessing, checkpoint, and signal-feature versions;
+- artifact, preprocessing, checkpoint, and signal-representation versions;
 - `variant_id`, `artifact_kind`, and a deterministic `cache-v1-<sha256>` key;
 - finite `rgb_logit` and `signal_logit` values;
 - the fixture fusion version and fused probability.
 
-The cache reader rejects missing fields, version mismatches, and keys that do not match the declared variant and artifact kind, with the expected and received values in the error. Cache keys include every configuration revision that can change an expert result.
+The cache reader validates each record against the experiment configuration and validated model bundle. It rejects missing fields, version mismatches, unsupported artifact kinds, and keys that do not match the declared variant and artifact kind, with the expected and received values in the error. Cache keys include every configuration revision that can change an expert result.
 
 ## Model-bundle metadata
 
-`model-bundle-v1` declares the artifact, preprocessing, checkpoint, signal-feature, and fusion versions plus numeric tolerance. Its reader rejects incomplete metadata, version mismatches, and a tolerance looser than the experiment configuration permits.
+`model-bundle-v1` declares the artifact, preprocessing, checkpoint, signal-representation, and fusion versions plus numeric tolerance. Its reader rejects incomplete metadata, version mismatches, unsupported fusion behavior, and a tolerance looser than the experiment configuration permits.
 
 The fixture bundle contains metadata and deterministic toy expert behavior only. Real weights, normalization statistics, calibration parameters, and the selected production fusion mechanism will extend the bundle in their owning tickets.
 

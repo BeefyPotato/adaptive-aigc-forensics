@@ -22,7 +22,7 @@ const config = ExperimentConfig.from({
   preprocessing_version: "shared-preprocessing-v1",
   checkpoint_revision: "fixture-rgb-v1",
   artifact_schema_version: "artifact-v1",
-  signal_feature_version: "fixture-signal-v1",
+  signal_representation_version: "fixture-signal-v1",
   manifest_path: "manifest.json",
   model_bundle_path: "model_bundle.json",
   numeric_tolerance: 1e-12,
@@ -46,7 +46,7 @@ test("variant identifiers and cache keys are deterministic", () => {
   assert.equal(firstVariant, variantIdentifier(identity));
   assert.equal(
     cacheKey(config, firstVariant, "expert-logits"),
-    "cache-v1-1a0bb7d383ec863fe16a4f2d6166a7942a834fac042f4fb19225b93d1e718778",
+    "cache-v1-7197a278aa35f318e880c380c50e0d2abcb01107698620b4739cd7ed78c203a3",
   );
   assert.notEqual(
     firstVariant,
@@ -62,7 +62,7 @@ test("model-bundle reader reports missing and incompatible metadata", () => {
     artifact_schema_version: "artifact-v1",
     preprocessing_version: "shared-preprocessing-v1",
     checkpoint_revision: "fixture-rgb-v1",
-    signal_feature_version: "fixture-signal-v1",
+    signal_representation_version: "fixture-signal-v1",
     fusion_version: "equal-logit-v1",
     numeric_tolerance: 1e-12,
   };
@@ -80,6 +80,14 @@ test("model-bundle reader reports missing and incompatible metadata", () => {
     () => readModelBundle(path, config),
     /checkpoint_revision.*wrong-revision.*fixture-rgb-v1/,
   );
+
+  completeBundle.checkpoint_revision = "fixture-rgb-v1";
+  completeBundle.fusion_version = "unknown-fusion-v1";
+  writeFileSync(path, JSON.stringify(completeBundle));
+  assert.throws(
+    () => readModelBundle(path, config),
+    /fusion_version.*unknown-fusion-v1.*equal-logit-v1/,
+  );
 });
 
 test("cache reader rejects incomplete or stale metadata", () => {
@@ -89,31 +97,54 @@ test("cache reader rejects incomplete or stale metadata", () => {
     artifact_schema_version: "artifact-v1",
     preprocessing_version: "shared-preprocessing-v1",
     checkpoint_revision: "fixture-rgb-v1",
-    signal_feature_version: "fixture-signal-v1",
+    signal_representation_version: "fixture-signal-v1",
     variant_id: "variant-v1-example",
     artifact_kind: "expert-logits",
     cache_key: cacheKey(config, "variant-v1-example", "expert-logits"),
     rgb_logit: 0.25,
     signal_logit: -0.5,
+    fusion_version: "equal-logit-v1",
+    pred: 0.4,
   };
+  const modelBundle = { fusionVersion: "equal-logit-v1" };
   writeFileSync(path, JSON.stringify(artifact));
-  assert.equal(readCacheArtifact(path, config).variant_id, "variant-v1-example");
+  assert.equal(readCacheArtifact(path, config, modelBundle).variant_id, "variant-v1-example");
 
   artifact.cache_key = "cache-v1-stale";
   writeFileSync(path, JSON.stringify(artifact));
-  assert.throws(() => readCacheArtifact(path, config), /cache_key.*cache-v1-stale.*cache-v1-/);
+  assert.throws(
+    () => readCacheArtifact(path, config, modelBundle),
+    /cache_key.*cache-v1-stale.*cache-v1-/,
+  );
   artifact.cache_key = cacheKey(config, "variant-v1-example", "expert-logits");
+
+  artifact.artifact_kind = "unknown-kind";
+  writeFileSync(path, JSON.stringify(artifact));
+  assert.throws(
+    () => readCacheArtifact(path, config, modelBundle),
+    /artifact_kind.*unknown-kind.*expert-logits/,
+  );
+  artifact.artifact_kind = "expert-logits";
+
+  artifact.fusion_version = "unknown-fusion-v1";
+  writeFileSync(path, JSON.stringify(artifact));
+  assert.throws(
+    () => readCacheArtifact(path, config, modelBundle),
+    /fusion_version.*unknown-fusion-v1.*equal-logit-v1/,
+  );
+  artifact.fusion_version = "equal-logit-v1";
 
   artifact.artifact_schema_version = "artifact-v0";
   writeFileSync(path, JSON.stringify(artifact));
   assert.throws(
-    () => readCacheArtifact(path, config),
+    () => readCacheArtifact(path, config, modelBundle),
     /artifact_schema_version.*artifact-v0.*artifact-v1/,
   );
+  artifact.artifact_schema_version = "artifact-v1";
 
-  delete artifact.checkpoint_revision;
+  delete artifact.pred;
   writeFileSync(path, JSON.stringify(artifact));
-  assert.throws(() => readCacheArtifact(path, config), /checkpoint_revision/);
+  assert.throws(() => readCacheArtifact(path, config, modelBundle), /pred/);
 });
 
 test("prediction records contain exactly image_path and a finite unit-interval pred", () => {
