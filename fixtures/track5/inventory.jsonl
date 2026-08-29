@@ -1,0 +1,2 @@
+{"img_id":"fixture-authentic","image_path":"images/checker.svg","label":0,"dataset_split":"train","provenance":{"source_dataset":"Track 5 controlled fixture","source_reference":"checker.svg","license":"CC0-1.0"}}
+{"img_id":"fixture-synthetic","image_path":"images/gradient.svg","label":1,"dataset_split":"train","provenance":{"source_dataset":"Track 5 controlled fixture","source_reference":"gradient.svg","license":"CC0-1.0"}}

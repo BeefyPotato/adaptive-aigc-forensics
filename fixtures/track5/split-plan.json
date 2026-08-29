@@ -1,0 +1,7 @@
+[
+  {
+    "split": "expert-training",
+    "datasetSplit": "train",
+    "perClass": 1
+  }
+]

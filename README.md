@@ -4,7 +4,7 @@ A degradation-aware AI-generated image detector that combines an RGB AIGC expert
 
 ## Reproducible contract fixture
 
-The issue #2 fixture establishes the versioned handoff contracts used by later experiment and submission work. It requires Node.js 22 or newer and has no third-party package dependencies.
+The issue #2 fixture establishes the versioned handoff contracts used by later experiment and submission work. It requires Node.js 22 or newer.
 
 From a clean checkout, run the complete fixture with:
 
@@ -28,6 +28,17 @@ npm test
 ```
 
 The dependency-free P3 decoder and toy experts are fixture implementations, not the production checkpoint or general image-format support. Later tickets can replace the expert functions and decoder behind the established seams without changing the artifact contracts. See [docs/contracts.md](docs/contracts.md) for the schemas and compatibility rules.
+
+## Track 5 experiment manifest
+
+Issue #3 adds the production source-selection, leakage-audit, corruption, and balanced-sampling contracts. Install the exact dependency lock and run its controlled two-image fixture with:
+
+```shell
+npm ci
+npm run track5:fixture
+```
+
+This writes a deterministic `track5-manifest.json` and `track5-leakage-audit.json` under `artifacts/track5-fixture/`. The fixture uses an explicit two-source split plan; the production CLI defaults cannot succeed without the required 14,000 eligible SID_Set source images. See [docs/track5-manifest.md](docs/track5-manifest.md) for the production inventory schema, command, split allocation, exact corruption conditions, leakage policy, and sampler contract.
 
 ## Dataset access
 

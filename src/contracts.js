@@ -117,6 +117,8 @@ export function variantIdentifier({
   corruptionSeed,
   preprocessingVersion,
   artifactSchemaVersion,
+  severity,
+  transformImplementationVersion,
 }) {
   const contractName = "variant identity";
   for (const [field, value] of [
@@ -129,14 +131,27 @@ export function variantIdentifier({
   }
   requireObject(corruptionParameters, `${contractName}.corruptionParameters`);
   requireNonnegativeInteger(corruptionSeed, "corruptionSeed", contractName);
-  return hashIdentifier("variant-v1", {
+  const identity = {
     artifact_schema_version: artifactSchemaVersion,
     condition_family: conditionFamily,
     corruption_parameters: corruptionParameters,
     corruption_seed: corruptionSeed,
     preprocessing_version: preprocessingVersion,
     source_id: sourceId,
-  });
+  };
+  if (severity !== undefined) {
+    requireNonemptyString(severity, "severity", contractName);
+    identity.severity = severity;
+  }
+  if (transformImplementationVersion !== undefined) {
+    requireNonemptyString(
+      transformImplementationVersion,
+      "transformImplementationVersion",
+      contractName,
+    );
+    identity.transform_implementation_version = transformImplementationVersion;
+  }
+  return hashIdentifier("variant-v1", identity);
 }
 
 export function cacheKey(config, variantId, artifactKind) {

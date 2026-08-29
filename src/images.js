@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { ContractError } from "./contracts.js";
+import { deterministicStandardNormal } from "./deterministic-random.js";
 
 function decodeAsciiPortablePixmap(path) {
   let text;
@@ -48,14 +48,6 @@ function decodeAsciiPortablePixmap(path) {
     rgb.push([channels[index], channels[index + 1], channels[index + 2]]);
   }
   return { width, height, rgb };
-}
-
-function deterministicStandardNormal(seed, channelIndex) {
-  const digest = createHash("sha256").update(`${seed}:${channelIndex}`, "utf8").digest();
-  const denominator = 2 ** 32 + 1;
-  const firstUniform = (digest.readUInt32BE(0) + 1) / denominator;
-  const secondUniform = (digest.readUInt32BE(4) + 1) / denominator;
-  return Math.sqrt(-2 * Math.log(firstUniform)) * Math.cos(2 * Math.PI * secondUniform);
 }
 
 function applyGaussianNoise(rgb, sigma, seed) {
