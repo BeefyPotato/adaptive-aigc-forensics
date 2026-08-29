@@ -1,0 +1,3 @@
+# Use Community Forensics checkpoint with provenance controls
+
+Use a revision-pinned Community Forensics 384 checkpoint as the primary RGB expert because retraining a competitive detector would jeopardize the 48-hour submission. Its public metadata does not expose enough image-level provenance to prove that every organizer demonstration image was absent from original training, so the project will document that residual uncertainty, checksum the weights, keep the organizer demonstration subset out of fine-tuning and model selection, and run exact and perceptual overlap checks against every training image the team controls.
