@@ -39,6 +39,18 @@ export function requirePositiveFiniteNumber(value, field, contractName) {
   }
 }
 
+export function requireLowercaseHex(value, field, length, contractName) {
+  if (typeof value !== "string" || !new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value)) {
+    throw new ContractError(
+      `${contractName}.${field} must be a lowercase ${length}-digit hex value.`,
+    );
+  }
+}
+
+export function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function assertCompatible(actual, expected, field, contractName) {
   if (actual !== expected) {
     throw new ContractError(

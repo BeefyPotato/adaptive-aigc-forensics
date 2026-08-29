@@ -7,10 +7,9 @@ import sharp from "sharp";
 
 import {
   ContractError,
-  requireFields,
   requireNonemptyString,
-  requireObject,
 } from "./contract-validation.js";
+import { validateSourceInventoryRecord } from "./source-inventory-contract.js";
 
 function toFilePath(value) {
   return value instanceof URL ? fileURLToPath(value) : value;
@@ -35,28 +34,6 @@ function resolveImagePath(datasetRoot, imagePath, contractName) {
   return { resolvedImage, relativeImage: relativeImage.replaceAll("\\", "/") };
 }
 
-function validateUninspectedRecord(record, index) {
-  const contractName = `SID_Set source inventory record ${index}`;
-  requireObject(record, contractName);
-  requireFields(
-    record,
-    ["img_id", "image_path", "label", "dataset_split", "provenance"],
-    contractName,
-  );
-  requireNonemptyString(record.img_id, "img_id", contractName);
-  if (record.label !== 0 && record.label !== 1 && record.label !== 2) {
-    throw new ContractError(`${contractName}.label must be 0, 1, or 2.`);
-  }
-  if (record.dataset_split !== "train" && record.dataset_split !== "validation") {
-    throw new ContractError(`${contractName}.dataset_split must be train or validation.`);
-  }
-  requireObject(record.provenance, `${contractName}.provenance`);
-  for (const field of ["source_dataset", "source_reference", "license"]) {
-    requireNonemptyString(record.provenance[field], field, `${contractName}.provenance`);
-  }
-  return contractName;
-}
-
 function perceptualDifferenceHash(pixels, { channels, width, height }) {
   if (channels !== 1 || width !== 9 || height !== 8) {
     throw new ContractError(
@@ -75,7 +52,7 @@ function perceptualDifferenceHash(pixels, { channels, width, height }) {
 }
 
 async function inspectRecord(record, index, datasetRoot) {
-  const contractName = validateUninspectedRecord(record, index);
+  const contractName = validateSourceInventoryRecord(record, index);
   const { resolvedImage, relativeImage } = resolveImagePath(
     datasetRoot,
     record.image_path,

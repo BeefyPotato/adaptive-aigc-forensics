@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
 
 import sharp from "sharp";
 
 import {
+  compareText,
   ContractError,
   requireFields,
+  requireLowercaseHex,
   requireNonemptyString,
   requireNonnegativeInteger,
   requireObject,
@@ -16,6 +17,7 @@ import {
   auditTrack5Sources,
   ORGANIZER_DEMONSTRATION_POLICY,
 } from "./leakage-audit.js";
+import { validateSourceInventoryRecord } from "./source-inventory-contract.js";
 
 export { assertLeakageAuditPassed, auditTrack5Sources } from "./leakage-audit.js";
 
@@ -84,60 +86,25 @@ function deterministicRank(splitSeed, sourceId) {
   return createHash("sha256").update(`${splitSeed}\0${sourceId}`, "utf8").digest("hex");
 }
 
-function compareText(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function requireHash(value, field, length, contractName) {
-  if (typeof value !== "string" || !new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value)) {
-    throw new ContractError(`${contractName}.${field} must be a lowercase ${length}-digit hex value.`);
-  }
-}
-
-function requireRelativeImagePath(imagePath, contractName) {
-  requireNonemptyString(imagePath, "image_path", contractName);
-  if (isAbsolute(imagePath) || imagePath.replaceAll("\\", "/").split("/").includes("..")) {
-    throw new ContractError(`${contractName}.image_path must stay relative to the dataset root.`);
-  }
-}
-
 function normalizeInventoryRecord(record, index, datasetRevision) {
-  const contractName = `SID_Set inventory record ${index}`;
-  requireObject(record, contractName);
+  const contractName = validateSourceInventoryRecord(record, index);
   requireFields(
     record,
     [
-      "img_id",
-      "image_path",
-      "label",
-      "dataset_split",
       "width",
       "height",
       "exact_sha256",
       "perceptual_hash",
-      "provenance",
     ],
     contractName,
   );
-  requireNonemptyString(record.img_id, "img_id", contractName);
-  requireRelativeImagePath(record.image_path, contractName);
-  if (record.label !== 0 && record.label !== 1 && record.label !== 2) {
-    throw new ContractError(`${contractName}.label must be 0, 1, or 2.`);
-  }
-  if (record.dataset_split !== "train" && record.dataset_split !== "validation") {
-    throw new ContractError(`${contractName}.dataset_split must be "train" or "validation".`);
-  }
   for (const field of ["width", "height"]) {
     if (!Number.isSafeInteger(record[field]) || record[field] <= 0) {
       throw new ContractError(`${contractName}.${field} must be a positive safe integer.`);
     }
   }
-  requireHash(record.exact_sha256, "exact_sha256", 64, contractName);
-  requireHash(record.perceptual_hash, "perceptual_hash", 16, contractName);
-  requireObject(record.provenance, `${contractName}.provenance`);
-  for (const field of ["source_dataset", "source_reference", "license"]) {
-    requireNonemptyString(record.provenance[field], field, `${contractName}.provenance`);
-  }
+  requireLowercaseHex(record.exact_sha256, "exact_sha256", 64, contractName);
+  requireLowercaseHex(record.perceptual_hash, "perceptual_hash", 16, contractName);
 
   return Object.freeze({
     source_id: `sid-set:${record.img_id}`,
@@ -377,7 +344,6 @@ export function buildTrack5Manifest(
       transform_implementation_version: transformImplementationVersion,
       sharp_version: sharp.versions.sharp,
       libvips_version: sharp.versions.vips,
-      node_version: process.versions.node,
       condition_count_per_source: TRACK5_CONDITION_MATRIX.length,
     }),
     organizer_demonstration_policy: ORGANIZER_DEMONSTRATION_POLICY,

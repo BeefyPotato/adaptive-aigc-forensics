@@ -90,4 +90,4 @@ When the organizer archive is unavailable, the audit records `not-available` rat
 
 ## Balanced training sampler
 
-`sampleBalancedTrainingObservations` accepts only `expert-training` or `fusion-training`. The requested draw count must allow exact equal allocation across both classes, all seven buckets (clean plus six corruption families), and every severity within a family. Within those constraints it continually selects the least-used eligible source with seeded deterministic tie-breaking. Validation, sealed-test, tampered, and organizer demonstration sources are rejected.
+`sampleBalancedTrainingObservations` accepts only the expert-training set or fusion-training set. It allocates each class equally, then sources within each class, then all seven buckets (clean plus six corruption families) within each source, and finally severities within each source/family bucket. Seeded cyclic allocation makes indivisible finite draws differ by at most one while preserving exact class-wide family and severity totals. Internal validation set, sealed internal test set, tampered, and organizer demonstration sources are rejected.

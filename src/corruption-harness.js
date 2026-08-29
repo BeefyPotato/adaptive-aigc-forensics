@@ -298,6 +298,29 @@ async function applyCenterCropRoundTrip(observation, parameters) {
   );
 }
 
+function applyClean(observation, parameters) {
+  if (Object.keys(parameters).length !== 0) {
+    throw new ContractError("clean observations must not declare corruption parameters.");
+  }
+  return Object.freeze({
+    data: Buffer.from(observation.data),
+    width: observation.width,
+    height: observation.height,
+    channels: observation.channels,
+    transform_details: Object.freeze({ operation: "clean" }),
+  });
+}
+
+const CORRUPTION_APPLICATORS = new Map([
+  ["clean", applyClean],
+  ["jpeg", applyJpegRoundTrip],
+  ["blur", applyGaussianBlur],
+  ["resize", applyResizeRoundTrip],
+  ["noise", applySeededRgbNoise],
+  ["color", applyAtomicColor],
+  ["crop", applyCenterCropRoundTrip],
+]);
+
 export async function applyCorruption(observation, corruptionVariant) {
   validateObservation(observation);
   requireObject(corruptionVariant, "corruption variant");
@@ -313,41 +336,15 @@ export async function applyCorruption(observation, corruptionVariant) {
     "corruption variant",
   );
 
-  if (corruptionVariant.condition_family === "clean") {
-    if (Object.keys(corruptionVariant.corruption_parameters).length !== 0) {
-      throw new ContractError("clean observations must not declare corruption parameters.");
-    }
-    return Object.freeze({
-      data: Buffer.from(observation.data),
-      width: observation.width,
-      height: observation.height,
-      channels: observation.channels,
-      transform_details: Object.freeze({ operation: "clean" }),
-    });
-  }
-  if (corruptionVariant.condition_family === "jpeg") {
-    return applyJpegRoundTrip(observation, corruptionVariant.corruption_parameters);
-  }
-  if (corruptionVariant.condition_family === "blur") {
-    return applyGaussianBlur(observation, corruptionVariant.corruption_parameters);
-  }
-  if (corruptionVariant.condition_family === "resize") {
-    return applyResizeRoundTrip(observation, corruptionVariant.corruption_parameters);
-  }
-  if (corruptionVariant.condition_family === "noise") {
-    return applySeededRgbNoise(
-      observation,
-      corruptionVariant.corruption_parameters,
-      corruptionVariant.corruption_seed,
+  const applicator = CORRUPTION_APPLICATORS.get(corruptionVariant.condition_family);
+  if (applicator === undefined) {
+    throw new ContractError(
+      `corruption variant.condition_family ${JSON.stringify(corruptionVariant.condition_family)} is unsupported.`,
     );
   }
-  if (corruptionVariant.condition_family === "color") {
-    return applyAtomicColor(observation, corruptionVariant.corruption_parameters);
-  }
-  if (corruptionVariant.condition_family === "crop") {
-    return applyCenterCropRoundTrip(observation, corruptionVariant.corruption_parameters);
-  }
-  throw new ContractError(
-    `corruption variant.condition_family ${JSON.stringify(corruptionVariant.condition_family)} is unsupported.`,
+  return applicator(
+    observation,
+    corruptionVariant.corruption_parameters,
+    corruptionVariant.corruption_seed,
   );
 }

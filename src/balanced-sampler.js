@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  compareText,
   ContractError,
   requireFields,
   requireNonemptyString,
@@ -10,10 +11,6 @@ import {
 import { TRACK5_CONDITION_MATRIX } from "./track5-manifest.js";
 
 const TRAINING_SPLITS = new Set(["expert-training", "fusion-training"]);
-
-function compareText(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
 
 function rank(seed, ...parts) {
   return createHash("sha256").update([seed, ...parts].join("\0"), "utf8").digest("hex");
@@ -147,34 +144,55 @@ export function sampleBalancedTrainingObservations(
     }
   }
   const observations = indexObservations(manifest.observations, sourceById, sourceIds, split);
-  const sourceCounts = new Map(sources.map(({ source_id: sourceId }) => [sourceId, 0]));
   const sampled = [];
 
   for (const label of [0, 1]) {
-    const classSources = sourcesByClass.get(label);
-    for (const [family, severities] of families) {
-      const perSeverity = perClassFamily / severities.length;
-      for (const severity of severities) {
-        for (let draw = 0; draw < perSeverity; draw += 1) {
-          const source = classSources.toSorted((left, right) => {
-            const countDifference =
-              sourceCounts.get(left.source_id) - sourceCounts.get(right.source_id);
-            if (countDifference !== 0) return countDifference;
-            return compareText(
-              rank(seed, label, family, severity, draw, left.source_id),
-              rank(seed, label, family, severity, draw, right.source_id),
-            );
-          })[0];
-          const key = [source.source_id, family, severity].join("\0");
-          const observation = observations.get(key);
-          if (observation === undefined) {
-            throw new ContractError(
-              `Track 5 sampler is missing ${family}/${severity} for ${source.source_id}.`,
-            );
-          }
-          sampled.push(observation);
-          sourceCounts.set(source.source_id, sourceCounts.get(source.source_id) + 1);
+    const classSources = sourcesByClass.get(label).toSorted((left, right) =>
+      compareText(
+        rank(seed, "source-order", label, left.source_id),
+        rank(seed, "source-order", label, right.source_id),
+      ),
+    );
+    const familyOrder = [...families.keys()].toSorted((left, right) =>
+      compareText(
+        rank(seed, "family-order", label, left),
+        rank(seed, "family-order", label, right),
+      ),
+    );
+    const severityOrder = new Map(
+      [...families].map(([family, severities]) => [
+        family,
+        severities.toSorted((left, right) =>
+          compareText(
+            rank(seed, "severity-order", label, family, left),
+            rank(seed, "severity-order", label, family, right),
+          ),
+        ),
+      ]),
+    );
+    const severityOffsets = new Map(familyOrder.map((family) => [family, 0]));
+    const perClass = count / 2;
+    const baseSourceDraws = Math.floor(perClass / classSources.length);
+    const extraSourceDraws = perClass % classSources.length;
+    let familyOffset = 0;
+
+    for (const [sourceIndex, source] of classSources.entries()) {
+      const sourceDraws = baseSourceDraws + (sourceIndex < extraSourceDraws ? 1 : 0);
+      for (let sourceDraw = 0; sourceDraw < sourceDraws; sourceDraw += 1) {
+        const family = familyOrder[familyOffset % familyOrder.length];
+        familyOffset += 1;
+        const severities = severityOrder.get(family);
+        const severityOffset = severityOffsets.get(family);
+        const severity = severities[severityOffset % severities.length];
+        severityOffsets.set(family, severityOffset + 1);
+        const key = [source.source_id, family, severity].join("\0");
+        const observation = observations.get(key);
+        if (observation === undefined) {
+          throw new ContractError(
+            `Track 5 sampler is missing ${family}/${severity} for ${source.source_id}.`,
+          );
         }
+        sampled.push(observation);
       }
     }
   }

@@ -24,15 +24,17 @@ function inventoryRecord(label, index) {
   };
 }
 
-function trainingManifest() {
+function trainingManifest(sourceCount = 3) {
   const inventory = [];
   for (const label of [0, 1]) {
-    for (let index = 1; index <= 3; index += 1) inventory.push(inventoryRecord(label, index));
+    for (let index = 1; index <= sourceCount; index += 1) {
+      inventory.push(inventoryRecord(label, index));
+    }
   }
   const sources = selectTrack5Sources(inventory, {
     datasetRevision: "fixture-revision",
     splitSeed: 7,
-    splitPlan: [{ split: "expert-training", datasetSplit: "train", perClass: 3 }],
+    splitPlan: [{ split: "expert-training", datasetSplit: "train", perClass: sourceCount }],
   });
   const observations = buildObservationRecords(sources, {
     artifactSchemaVersion: "artifact-v1",
@@ -91,7 +93,56 @@ test("training sampler balances class, source, family, and severity deterministi
   }
 });
 
-test("training sampler rejects validation and organizer demonstration inputs", () => {
+test("training sampler applies family and severity balance within each source allocation", () => {
+  const manifest = trainingManifest(5);
+  const sampled = sampleBalancedTrainingObservations(manifest, {
+    split: "expert-training",
+    count: 168,
+    seed: 31,
+  });
+  const expectedSeverities = {
+    clean: ["clean"],
+    jpeg: ["quality-90", "quality-70", "quality-50", "quality-30"],
+    blur: ["sigma-0.5", "sigma-1", "sigma-2"],
+    resize: ["factor-0.5", "factor-0.25"],
+    noise: ["sigma-0.02", "sigma-0.05", "sigma-0.1"],
+    color: [
+      "brightness-0.8",
+      "brightness-1.2",
+      "contrast-0.8",
+      "contrast-1.2",
+      "saturation-0.8",
+      "saturation-1.2",
+    ],
+    crop: ["center-0.8"],
+  };
+
+  for (const source of manifest.sources) {
+    const sourceSamples = sampled.filter(
+      ({ source_id: sourceId }) => sourceId === source.source_id,
+    );
+    const familyCounts = Object.keys(expectedSeverities).map(
+      (family) =>
+        sourceSamples.filter(({ condition_family: actual }) => actual === family).length,
+    );
+    assert.ok(Math.max(...familyCounts) - Math.min(...familyCounts) <= 1);
+    for (const [family, severities] of Object.entries(expectedSeverities)) {
+      const severityCounts = severities.map(
+        (severity) =>
+          sourceSamples.filter(
+            ({ condition_family: actualFamily, severity: actualSeverity }) =>
+              actualFamily === family && actualSeverity === severity,
+          ).length,
+      );
+      assert.ok(
+        Math.max(...severityCounts) - Math.min(...severityCounts) <= 1,
+        `${source.source_id} ${family}: ${severityCounts.join(",")}`,
+      );
+    }
+  }
+});
+
+test("training sampler rejects sealed internal test set and organizer demonstration inputs", () => {
   const manifest = trainingManifest();
   assert.throws(
     () =>

@@ -1,6 +1,8 @@
 import {
+  compareText,
   ContractError,
   requireFields,
+  requireLowercaseHex,
   requireNonemptyString,
   requireNonnegativeInteger,
   requireObject,
@@ -15,16 +17,6 @@ export const ORGANIZER_DEMONSTRATION_POLICY = Object.freeze({
     "threshold-fitting",
   ]),
 });
-
-function compareText(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function requireHexHash(value, field, length, contractName) {
-  if (typeof value !== "string" || !new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value)) {
-    throw new ContractError(`${contractName}.${field} must be a lowercase ${length}-digit hex value.`);
-  }
-}
 
 function hammingDistance(left, right) {
   let difference = left ^ right;
@@ -97,8 +89,8 @@ function normalizeSources(sources) {
     );
     requireNonemptyString(source.source_id, "source_id", contractName);
     requireNonemptyString(source.split, "split", contractName);
-    requireHexHash(source.exact_sha256, "exact_sha256", 64, contractName);
-    requireHexHash(source.perceptual_hash, "perceptual_hash", 16, contractName);
+    requireLowercaseHex(source.exact_sha256, "exact_sha256", 64, contractName);
+    requireLowercaseHex(source.perceptual_hash, "perceptual_hash", 16, contractName);
     return source;
   });
 }
@@ -193,8 +185,8 @@ function organizerAudit(organizerHashes, exactByHash, perceptualIndex, perceptua
     );
     requireNonemptyString(organizerImage.image_id, "image_id", contractName);
     requireNonemptyString(organizerImage.collection, "collection", contractName);
-    requireHexHash(organizerImage.exact_sha256, "exact_sha256", 64, contractName);
-    requireHexHash(organizerImage.perceptual_hash, "perceptual_hash", 16, contractName);
+    requireLowercaseHex(organizerImage.exact_sha256, "exact_sha256", 64, contractName);
+    requireLowercaseHex(organizerImage.perceptual_hash, "perceptual_hash", 16, contractName);
 
     for (const source of exactByHash.get(organizerImage.exact_sha256) ?? []) {
       const overlap = {
