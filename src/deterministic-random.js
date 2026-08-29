@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 
+export function deterministicHexRank(seed, ...parts) {
+  return createHash("sha256").update([seed, ...parts].join("\0"), "utf8").digest("hex");
+}
+
 export function deterministicStandardNormal(seed, channelIndex) {
   const digest = createHash("sha256").update(`${seed}:${channelIndex}`, "utf8").digest();
   const denominator = 2 ** 32 + 1;

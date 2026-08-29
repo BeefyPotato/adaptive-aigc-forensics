@@ -7,6 +7,7 @@ import {
   requireObject,
 } from "./contract-validation.js";
 import { deterministicStandardNormal } from "./deterministic-random.js";
+import { requireTrack5Condition } from "./track5-conditions.js";
 
 function rawSharp(observation) {
   return sharp(observation.data, {
@@ -55,12 +56,6 @@ export async function decodeSourceImage(path) {
 }
 
 async function applyJpegRoundTrip(observation, parameters) {
-  if (![90, 70, 50, 30].includes(parameters.quality)) {
-    throw new ContractError("JPEG corruption quality must be one of 90, 70, 50, or 30.");
-  }
-  if (parameters.chroma_subsampling !== "4:2:0") {
-    throw new ContractError("JPEG corruption chroma_subsampling must be 4:2:0.");
-  }
   const encoded = await rawSharp(observation)
     .jpeg({
       quality: parameters.quality,
@@ -156,9 +151,6 @@ function gaussianKernel(sigma) {
 }
 
 async function applyGaussianBlur(observation, parameters) {
-  if (![0.5, 1, 2].includes(parameters.sigma)) {
-    throw new ContractError("blur corruption sigma must be one of 0.5, 1, or 2.");
-  }
   const kernel = gaussianKernel(parameters.sigma);
   return rawObservation(
     rawSharp(observation).convolve({
@@ -178,12 +170,6 @@ async function applyGaussianBlur(observation, parameters) {
 }
 
 async function applyResizeRoundTrip(observation, parameters) {
-  if (![0.5, 0.25].includes(parameters.factor)) {
-    throw new ContractError("resize corruption factor must be 0.5 or 0.25.");
-  }
-  if (parameters.down_kernel !== "lanczos3" || parameters.up_kernel !== "cubic") {
-    throw new ContractError("resize corruption requires lanczos3 downscaling and cubic restoration.");
-  }
   const downWidth = Math.max(1, Math.round(observation.width * parameters.factor));
   const downHeight = Math.max(1, Math.round(observation.height * parameters.factor));
   const downsampled = await rawObservation(
@@ -215,12 +201,6 @@ async function applyResizeRoundTrip(observation, parameters) {
 }
 
 function applySeededRgbNoise(observation, parameters, seed) {
-  if (![0.02, 0.05, 0.1].includes(parameters.sigma)) {
-    throw new ContractError("noise corruption sigma must be one of 0.02, 0.05, or 0.1.");
-  }
-  if (parameters.color_space !== "rgb-0-1") {
-    throw new ContractError("noise corruption color_space must be rgb-0-1.");
-  }
   const data = Buffer.allocUnsafe(observation.data.length);
   for (let index = 0; index < observation.data.length; index += 1) {
     const noise = deterministicStandardNormal(seed, index) * parameters.sigma * 255;
@@ -242,14 +222,6 @@ function applySeededRgbNoise(observation, parameters, seed) {
 }
 
 async function applyAtomicColor(observation, parameters) {
-  if (!["brightness", "contrast", "saturation"].includes(parameters.property)) {
-    throw new ContractError(
-      "color corruption property must be brightness, contrast, or saturation.",
-    );
-  }
-  if (![0.8, 1.2].includes(parameters.factor)) {
-    throw new ContractError("color corruption factor must be 0.8 or 1.2.");
-  }
   let pipeline = rawSharp(observation);
   if (parameters.property === "contrast") {
     pipeline = pipeline.linear(parameters.factor, 128 * (1 - parameters.factor));
@@ -264,15 +236,6 @@ async function applyAtomicColor(observation, parameters) {
 }
 
 async function applyCenterCropRoundTrip(observation, parameters) {
-  if (
-    parameters.retained_fraction !== 0.8 ||
-    parameters.position !== "center" ||
-    parameters.restoration_kernel !== "cubic"
-  ) {
-    throw new ContractError(
-      "crop corruption requires a centered 0.8 retained fraction with cubic restoration.",
-    );
-  }
   const cropWidth = Math.max(1, Math.round(observation.width * parameters.retained_fraction));
   const cropHeight = Math.max(1, Math.round(observation.height * parameters.retained_fraction));
   const cropLeft = Math.floor((observation.width - cropWidth) / 2);
@@ -298,10 +261,7 @@ async function applyCenterCropRoundTrip(observation, parameters) {
   );
 }
 
-function applyClean(observation, parameters) {
-  if (Object.keys(parameters).length !== 0) {
-    throw new ContractError("clean observations must not declare corruption parameters.");
-  }
+function applyClean(observation) {
   return Object.freeze({
     data: Buffer.from(observation.data),
     width: observation.width,
@@ -336,10 +296,14 @@ export async function applyCorruption(observation, corruptionVariant) {
     "corruption variant",
   );
 
+  requireTrack5Condition(
+    corruptionVariant.condition_family,
+    corruptionVariant.corruption_parameters,
+  );
   const applicator = CORRUPTION_APPLICATORS.get(corruptionVariant.condition_family);
   if (applicator === undefined) {
     throw new ContractError(
-      `corruption variant.condition_family ${JSON.stringify(corruptionVariant.condition_family)} is unsupported.`,
+      `corruption variant.condition_family ${JSON.stringify(corruptionVariant.condition_family)} has no implementation.`,
     );
   }
   return applicator(

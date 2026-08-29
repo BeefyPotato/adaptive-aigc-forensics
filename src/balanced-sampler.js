@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   compareText,
   ContractError,
@@ -8,13 +6,10 @@ import {
   requireNonnegativeInteger,
   requireObject,
 } from "./contract-validation.js";
-import { TRACK5_CONDITION_MATRIX } from "./track5-manifest.js";
+import { deterministicHexRank as rank } from "./deterministic-random.js";
+import { TRACK5_CONDITION_MATRIX } from "./track5-conditions.js";
 
 const TRAINING_SPLITS = new Set(["expert-training", "fusion-training"]);
-
-function rank(seed, ...parts) {
-  return createHash("sha256").update([seed, ...parts].join("\0"), "utf8").digest("hex");
-}
 
 function conditionHierarchy() {
   const families = new Map();

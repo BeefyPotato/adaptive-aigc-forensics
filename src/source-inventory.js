@@ -16,11 +16,7 @@ function toFilePath(value) {
 }
 
 function resolveImagePath(datasetRoot, imagePath, contractName) {
-  requireNonemptyString(imagePath, "image_path", contractName);
   const root = resolve(toFilePath(datasetRoot));
-  if (isAbsolute(imagePath)) {
-    throw new ContractError(`${contractName}.image_path must stay relative to the dataset root.`);
-  }
   const resolvedImage = resolve(root, imagePath);
   const relativeImage = relative(root, resolvedImage);
   if (

@@ -183,3 +183,16 @@ test("clean observations preserve the decoded RGB image", async () => {
   assert.deepEqual(clean.data, source.data);
   assert.deepEqual(clean.transform_details, { operation: "clean" });
 });
+
+test("corruption harness rejects parameters outside the declared condition matrix", async () => {
+  const source = await decodeSourceImage(sourceImagePath);
+  await assert.rejects(
+    () =>
+      applyCorruption(source, {
+        condition_family: "jpeg",
+        corruption_parameters: { quality: 60, chroma_subsampling: "4:2:0" },
+        corruption_seed: 23,
+      }),
+    /declared Track 5 condition/i,
+  );
+});
