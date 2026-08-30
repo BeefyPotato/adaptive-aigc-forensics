@@ -1,0 +1,32 @@
+{
+  "schema_version": "community-forensics-models-v1",
+  "upstream_repository": "https://github.com/JeongsooP/Community-Forensics",
+  "upstream_revision": "ee5b71d43db0f3779e1edd64ee927b13f2dd6ad4",
+  "license": "MIT",
+  "preprocessing_version": "community-forensics-eval-v1",
+  "score_direction": "positive-logit-means-ai-generated",
+  "numeric_tolerance": 0.00001,
+  "known_provenance_limitations": "The public model metadata identifies training collections but does not provide an image-level provenance ledger proving that every organizer demonstration image was absent. The organizer demonstration set remains evaluation-only and overlap checks must be run against all locally controlled training sources.",
+  "models": {
+    "384": {
+      "role": "primary",
+      "repository": "OwensLab/commfor-model-384",
+      "revision": "6076002bf0d9dd37537f965ee2f06f826c333b61",
+      "checkpoint_name": "model.safetensors",
+      "sha256": "b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387",
+      "input_resolution": 384,
+      "resize_short_edge": 440,
+      "parameter_count": 21811969
+    },
+    "224": {
+      "role": "smoke-test-and-memory-fallback",
+      "repository": "OwensLab/commfor-model-224",
+      "revision": "26afc31e6b40c312c3fd42c05a758be62446215b",
+      "checkpoint_name": "model.safetensors",
+      "sha256": "a6cc439d5a6d2dfadd60c77d27a2838ad55b34e601ecd30f46ad97266d6ac4e0",
+      "input_resolution": 224,
+      "resize_short_edge": 256,
+      "parameter_count": 21666049
+    }
+  }
+}
