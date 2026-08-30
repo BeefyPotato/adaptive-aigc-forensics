@@ -28,6 +28,10 @@ _Avoid_: Original sample, parent image
 A deterministic observation derived from a source image using a declared real-world transformation, severity, and seed.
 _Avoid_: Augmented image, transformed copy
 
+**Materialized observation**:
+The lossless RGB pixel artifact produced by resolving one corruption variant, shared by expert branches before their branch-specific preprocessing.
+_Avoid_: Corrupted source, augmented file
+
 **Corruption harness**:
 The reproducible system that creates or describes clean and corrupted observations symmetrically across authenticity classes for training and evaluation.
 _Avoid_: Augmentation pipeline, preprocessing

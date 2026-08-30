@@ -50,6 +50,8 @@ The project uses the existing Community Forensics detector as a frozen RGB exper
 
 Issue #5 adds the reproducible robustness-baseline runner. It writes versioned logits for downstream fusion, internal-validation robustness metrics, runtime/GPU profiling, and a deterministic rerun check without exposing sealed-test labels. See [docs/rgb-baseline.md](docs/rgb-baseline.md).
 
+Production RGB and signal work must first resolve Issue #3 recipes with `scripts/materialize-track5-observations.mjs`. The resulting lossless, checksummed observation is the common pixel handoff; recipe-only manifests are rejected by the RGB baseline to prevent clean images from being reported as corruption results.
+
 ## Signal expert
 
 Issue #6 adds the deterministic 26-value signal representation, leakage-safe normalization, reproducible small MLP training, strict feature/logit caches, and corruption-family validation metrics. See [docs/signal-expert.md](docs/signal-expert.md).

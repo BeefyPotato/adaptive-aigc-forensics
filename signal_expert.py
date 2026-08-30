@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
-from PIL import Image, ImageOps
+from shared_observation import prepare_shared_expert_rgb
 
 
 SIGNAL_REPRESENTATION_VERSION = "signal-representation-v1"
@@ -31,11 +31,9 @@ ALLOWED_TRAIN_SPLIT = "expert-training"
 ALLOWED_SELECTION_SPLIT = "internal-validation"
 
 
-def decode_native_rgb(path: Path | str) -> np.ndarray:
-    """Decode/orient to native-resolution RGB in [0, 1]; do not resize or crop."""
-    with Image.open(path) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
-        return np.asarray(image, dtype=np.float64) / 255.0
+def decode_expert_rgb(path: Path | str, *, resolution: int = 384) -> np.ndarray:
+    """Decode the shared post-corruption checkpoint crop into RGB [0, 1]."""
+    return prepare_shared_expert_rgb(path, resolution=resolution).astype(np.float64) / 255.0
 
 
 def rgb_to_luminance(rgb: np.ndarray) -> np.ndarray:

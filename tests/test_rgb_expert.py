@@ -13,6 +13,8 @@ from rgb_expert import (
     preprocess_image,
     verify_checkpoint,
 )
+from shared_observation import decode_shared_rgb, prepare_shared_expert_rgb
+from signal_expert import decode_expert_rgb
 
 
 class RecordingBackend:
@@ -25,6 +27,16 @@ class RecordingBackend:
 
 
 class RgbExpertTests(unittest.TestCase):
+    def test_rgb_and_signal_branches_decode_identical_shared_observation_pixels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "shared.png"
+            pixels = np.arange(12 * 10 * 3, dtype=np.uint8).reshape(10, 12, 3)
+            Image.fromarray(pixels, mode="RGB").save(path)
+            shared = decode_shared_rgb(path)
+            shared_crop = prepare_shared_expert_rgb(path, resolution=224)
+            signal = decode_expert_rgb(path, resolution=224)
+            np.testing.assert_array_equal(shared, pixels)
+            np.testing.assert_array_equal(np.rint(signal * 255).astype(np.uint8), shared_crop)
     def test_metadata_pins_primary_and_fallback_below_track5_limit(self):
         metadata = load_model_metadata()
         self.assertEqual(metadata["models"]["384"]["role"], "primary")

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable, Protocol
 
 import numpy as np
-from PIL import Image, ImageOps
+from shared_observation import SHARED_EXPERT_GEOMETRY, prepare_shared_expert_rgb
 
 
 ROOT = Path(__file__).resolve().parent
@@ -48,6 +48,8 @@ def load_model_metadata(path: Path = METADATA_PATH) -> dict:
             raise ValueError(f"Missing Community Forensics {resolution} metadata.")
         if model.get("input_resolution") != int(resolution):
             raise ValueError(f"Community Forensics {resolution} input resolution is incompatible.")
+        if model.get("resize_short_edge") != SHARED_EXPERT_GEOMETRY[int(resolution)]:
+            raise ValueError(f"Community Forensics {resolution} shared geometry is incompatible.")
         if not isinstance(model.get("parameter_count"), int) or model["parameter_count"] >= TRACK5_PARAMETER_LIMIT:
             raise ValueError(f"Community Forensics {resolution} exceeds the Track 5 parameter limit.")
         for field, length in (("revision", 40), ("sha256", 64)):
@@ -72,18 +74,7 @@ def preprocess_image(path: Path | str, *, resolution: int = 384) -> np.ndarray:
     model = metadata["models"].get(str(resolution))
     if model is None:
         raise ValueError("Community Forensics resolution must be 384 or 224.")
-    with Image.open(path) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
-        width, height = image.size
-        scale = model["resize_short_edge"] / min(width, height)
-        resized = image.resize(
-            (int(width * scale), int(height * scale)),
-            resample=Image.Resampling.BILINEAR,
-        )
-        left = (resized.width - resolution) // 2
-        top = (resized.height - resolution) // 2
-        cropped = resized.crop((left, top, left + resolution, top + resolution))
-        rgb = np.asarray(cropped, dtype=np.float32) / 255.0
+    rgb = prepare_shared_expert_rgb(path, resolution=resolution).astype(np.float32) / 255.0
     chw = np.transpose(rgb, (2, 0, 1))
     return np.ascontiguousarray((chw - IMAGENET_MEAN) / IMAGENET_STD, dtype=np.float32)
 
@@ -236,6 +227,10 @@ class CommunityForensicsBackend:
         if not self._device.startswith("cuda"):
             return None
         return int(self._torch.cuda.max_memory_allocated(self._device))
+
+    def reset_peak_memory(self) -> None:
+        if self._device.startswith("cuda"):
+            self._torch.cuda.reset_peak_memory_stats(self._device)
 
     def predict_logits(self, batch: np.ndarray) -> np.ndarray:
         tensor = self._torch.from_numpy(batch).to(self._device)
