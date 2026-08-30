@@ -29,6 +29,7 @@ export async function fetchWithRetry(
   {
     description = "request",
     fetchImplementation = globalThis.fetch,
+    consumeResponse,
     delayImplementation = delay,
     attempts = 12,
     requestTimeoutMilliseconds = 60_000,
@@ -45,6 +46,11 @@ export async function fetchWithRetry(
   if (typeof delayImplementation !== "function") {
     throw new ContractError(
       "SID_Set transport options.delayImplementation must be a function.",
+    );
+  }
+  if (consumeResponse !== undefined && typeof consumeResponse !== "function") {
+    throw new ContractError(
+      "SID_Set transport options.consumeResponse must be a function when provided.",
     );
   }
   for (const [field, value] of [
@@ -70,28 +76,42 @@ export async function fetchWithRetry(
       Math.min(requestTimeoutMilliseconds, remaining),
     );
     let response;
+    let retryAfterMilliseconds;
+    let result;
+    let succeeded = false;
     try {
       response = await fetchImplementation(url, { signal: controller.signal });
+      if (!response.ok) {
+        const responseError = new Error(
+          `${description} returned HTTP ${response.status}.`,
+        );
+        if (response.status !== 429 && response.status < 500) {
+          await response.body?.cancel();
+          throw new ContractError(responseError.message);
+        }
+        const retryAfterSeconds = Number(response.headers.get("retry-after"));
+        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+          retryAfterMilliseconds = retryAfterSeconds * 1_000;
+        }
+        await response.body?.cancel();
+        lastError = responseError;
+      } else {
+        result =
+          consumeResponse === undefined
+            ? response
+            : await consumeResponse(response, {
+                attempt,
+                signal: controller.signal,
+              });
+        succeeded = true;
+      }
     } catch (error) {
+      if (error instanceof ContractError) throw error;
       lastError = error;
     } finally {
       clearTimeout(timeout);
     }
-
-    let retryAfterMilliseconds;
-    if (response !== undefined) {
-      if (response.ok) return response;
-      lastError = new Error(`${description} returned HTTP ${response.status}.`);
-      if (response.status !== 429 && response.status < 500) {
-        await response.body?.cancel();
-        throw new ContractError(lastError.message);
-      }
-      const retryAfterSeconds = Number(response.headers.get("retry-after"));
-      if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-        retryAfterMilliseconds = retryAfterSeconds * 1_000;
-      }
-      await response.body?.cancel();
-    }
+    if (succeeded) return result;
 
     if (attempt < attempts) {
       const remainingAfterRequest = deadline - Date.now();
@@ -446,6 +466,32 @@ async function inspectRecord(record, index, datasetRoot) {
       `${contractName}.image_path could not be read (${relativeImage}): ${error.message}`,
     );
   }
+  const exactSha256 = createHash("sha256").update(file).digest("hex");
+  const hasExpectedByteLength = Object.hasOwn(record, "byte_length");
+  const hasExpectedHash = Object.hasOwn(record, "exact_sha256");
+  if (hasExpectedByteLength !== hasExpectedHash) {
+    throw new ContractError(
+      `${contractName} must provide byte_length and exact_sha256 together.`,
+    );
+  }
+  if (hasExpectedByteLength) {
+    requireNonnegativeInteger(record.byte_length, "byte_length", contractName);
+    if (record.byte_length === 0) {
+      throw new ContractError(`${contractName}.byte_length must be positive.`);
+    }
+    requireLowercaseHex(record.exact_sha256, "exact_sha256", 64, contractName);
+    if (file.length !== record.byte_length) {
+      throw new ContractError(
+        `${contractName}.image_path does not match its pinned byte length ` +
+          `(${relativeImage}; received ${file.length}, expected ${record.byte_length}).`,
+      );
+    }
+    if (exactSha256 !== record.exact_sha256) {
+      throw new ContractError(
+        `${contractName}.image_path does not match its pinned SHA-256 (${relativeImage}).`,
+      );
+    }
+  }
 
   let metadata;
   let hashPixels;
@@ -474,7 +520,7 @@ async function inspectRecord(record, index, datasetRoot) {
     image_path: relativeImage,
     width,
     height,
-    exact_sha256: createHash("sha256").update(file).digest("hex"),
+    exact_sha256: exactSha256,
     perceptual_hash: perceptualDifferenceHash(hashPixels.data, hashPixels.info),
     provenance: Object.freeze({ ...record.provenance }),
   });

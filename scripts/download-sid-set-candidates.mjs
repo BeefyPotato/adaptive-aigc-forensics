@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+import { ContractError } from "../src/contract-validation.js";
 import {
   candidateFileMatches,
   fetchWithRetry,
@@ -71,17 +72,10 @@ async function loadCandidatePool() {
 
 async function fetchCandidatePage(group) {
   const offset = group.page * PAGE_SIZE;
-  const response = await fetchWithRetry(rowsUrl(group.datasetSplit, offset), {
+  const page = await fetchWithRetry(rowsUrl(group.datasetSplit, offset), {
     description: `${group.datasetSplit} candidate page ${group.page + 1}`,
+    consumeResponse: (response) => response.json(),
   });
-  let page;
-  try {
-    page = await response.json();
-  } catch (error) {
-    throw new Error(
-      `${group.datasetSplit} candidate page ${group.page + 1} returned invalid JSON: ${error.message}`,
-    );
-  }
   return validateSidSetRowsPage(page, {
     datasetSplit: group.datasetSplit,
     expectedCandidates: group.records,
@@ -99,21 +93,24 @@ async function downloadCandidate(candidate, imageUrl) {
   const temporary = `${target}.${process.pid}.part`;
   await rm(temporary, { force: true });
   try {
-    const response = await fetchWithRetry(imageUrl, {
+    await fetchWithRetry(imageUrl, {
       description: `image sid-set:${candidate.img_id}`,
+      consumeResponse: async (response) => {
+        await rm(temporary, { force: true });
+        if (response.body === null) {
+          throw new Error(`image sid-set:${candidate.img_id} returned no body.`);
+        }
+        await pipeline(
+          Readable.fromWeb(response.body),
+          createWriteStream(temporary, { flags: "wx" }),
+        );
+        if (!(await candidateFileMatches(temporary, candidate))) {
+          throw new ContractError(
+            `image sid-set:${candidate.img_id} does not match its pinned byte length and SHA-256.`,
+          );
+        }
+      },
     });
-    if (response.body === null) {
-      throw new Error(`image sid-set:${candidate.img_id} returned no body.`);
-    }
-    await pipeline(
-      Readable.fromWeb(response.body),
-      createWriteStream(temporary, { flags: "wx" }),
-    );
-    if (!(await candidateFileMatches(temporary, candidate))) {
-      throw new Error(
-        `image sid-set:${candidate.img_id} does not match its pinned byte length and SHA-256.`,
-      );
-    }
     await rm(target, { force: true });
     await rename(temporary, target);
     return "downloaded";
@@ -187,15 +184,11 @@ async function prepareCandidates(records) {
 
 function toInventoryRecord(candidate) {
   const {
-    byte_length: byteLength,
     candidate_schema_version: candidateSchemaVersion,
-    exact_sha256: exactSha256,
     row_index: rowIndex,
     ...inventory
   } = candidate;
-  void byteLength;
   void candidateSchemaVersion;
-  void exactSha256;
   void rowIndex;
   return inventory;
 }

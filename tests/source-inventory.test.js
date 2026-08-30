@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -248,6 +248,65 @@ test("SID_Set transport retries transient failures but not permanent responses",
   assert.deepEqual(delays, [1_000, 2_000]);
 });
 
+test("SID_Set transport keeps retries and deadlines active while consuming bodies", async () => {
+  let attempts = 0;
+  const delays = [];
+  const result = await sourceInventoryModule.fetchWithRetry(
+    "https://example.test/body",
+    {
+      description: "candidate body",
+      fetchImplementation: async () => {
+        attempts += 1;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              if (attempts === 1) {
+                controller.error(new Error("body interrupted"));
+              } else {
+                controller.enqueue(new TextEncoder().encode("ready"));
+                controller.close();
+              }
+            },
+          }),
+        );
+      },
+      consumeResponse: (response) => response.text(),
+      delayImplementation: async (milliseconds) => delays.push(milliseconds),
+      attempts: 3,
+    },
+  );
+
+  assert.equal(result, "ready");
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [1_000]);
+});
+
+test("SID_Set transport aborts a stalled response body at its request deadline", async () => {
+  await assert.rejects(
+    sourceInventoryModule.fetchWithRetry("https://example.test/stalled-body", {
+      description: "stalled candidate body",
+      fetchImplementation: async (_url, { signal }) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              signal.addEventListener(
+                "abort",
+                () => controller.error(signal.reason),
+                { once: true },
+              );
+            },
+          }),
+        ),
+      consumeResponse: (response) => response.text(),
+      delayImplementation: async () => {},
+      attempts: 1,
+      requestTimeoutMilliseconds: 20,
+      totalTimeoutMilliseconds: 100,
+    }),
+    /timed out|abort/i,
+  );
+});
+
 test("candidate file reuse requires its pinned byte length and SHA-256", async () => {
   assert.equal(typeof sourceInventoryModule.candidateFileMatches, "function");
   const temporaryRoot = await mkdtemp(join(tmpdir(), "sid-set-candidate-"));
@@ -276,6 +335,53 @@ test("candidate file reuse requires its pinned byte length and SHA-256", async (
     assert.equal(
       await sourceInventoryModule.candidateFileMatches(candidatePath, candidate),
       false,
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("manifest inspection rejects candidate bytes changed after download verification", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "sid-set-inspection-"));
+  const imageDirectory = join(temporaryRoot, "images");
+  const imagePath = join(imageDirectory, "candidate.svg");
+  const original = await readFile(
+    new URL("../fixtures/track5/images/checker.svg", import.meta.url),
+  );
+  const originalText = original.toString("utf8");
+  const changed = Buffer.from(
+    originalText.replace("#171923", "#171924"),
+    "utf8",
+  );
+  const record = {
+    img_id: "pinned-candidate",
+    image_path: "images/candidate.svg",
+    label: 0,
+    dataset_split: "train",
+    byte_length: original.length,
+    exact_sha256: createHash("sha256").update(original).digest("hex"),
+    provenance: {
+      source_dataset: "SID_Set",
+      source_reference: "pinned candidate fixture",
+      license: "CC-BY-4.0",
+    },
+  };
+  try {
+    await mkdir(imageDirectory, { recursive: true });
+    await writeFile(imagePath, original);
+    const inspected = await sourceInventoryModule.inspectSourceInventory([record], {
+      datasetRoot: temporaryRoot,
+      concurrency: 1,
+    });
+    assert.equal(inspected[0].exact_sha256, record.exact_sha256);
+
+    await writeFile(imagePath, changed);
+    await assert.rejects(
+      sourceInventoryModule.inspectSourceInventory([record], {
+        datasetRoot: temporaryRoot,
+        concurrency: 1,
+      }),
+      /pinned.*SHA-256|SHA-256.*pinned/i,
     );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });

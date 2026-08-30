@@ -19,13 +19,14 @@ The fixture inspects two checked-in SVG source images and writes deterministic a
 The input is JSON Lines with one object per SID_Set source image:
 
 ```json
-{"img_id":"stable-SID-id","image_path":"train/real/example.jpg","label":0,"dataset_split":"train","provenance":{"source_dataset":"upstream collection","source_reference":"stable upstream id","license":"declared license"}}
+{"img_id":"stable-SID-id","image_path":"train/real/example.jpg","label":0,"dataset_split":"train","byte_length":12345,"exact_sha256":"64-lowercase-hex-digits","provenance":{"source_dataset":"upstream collection","source_reference":"stable upstream id","license":"declared license"}}
 ```
 
 - `img_id` must remain stable within the pinned SID_Set revision.
 - `image_path` is relative to `--dataset-root`; absolute paths and traversal outside that root are rejected.
 - `label` follows SID_Set: `0` authentic, `1` fully synthetic, and `2` tampered. Label `2` is inspected but cannot enter a Track 5 partition.
 - `dataset_split` is the upstream `train` or `validation` split.
+- Production inventories include the pinned `byte_length` and `exact_sha256` together. The inspector rechecks both immediately before decoding so a file changed after download verification cannot enter selection. Small controlled fixtures may omit both fields.
 - provenance requires `source_dataset`, `source_reference`, and `license`.
 
 The inspector decodes every image, records its orientation-corrected dimensions, hashes the original file with SHA-256, and derives a 64-bit difference hash for perceptual leakage checks. These computed fields, the pinned dataset revision, and provenance are embedded in each selected source record.
