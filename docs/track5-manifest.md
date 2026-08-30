@@ -1,6 +1,6 @@
 # Track 5 experiment manifest
 
-Issue #3 implements the reproducible Track 5 source-selection and corruption harness. It includes a pinned SID_Set candidate downloader, but downloaded images, metadata caches, inventories, and generated artifacts remain local and are not committed.
+Issue #3 implements the reproducible Track 5 source-selection and corruption harness. It includes a content-addressed SID_Set candidate downloader, but downloaded images, inventories, and generated artifacts remain local and are not committed. The tracked `metadata/sid-set-candidate-pool-v1.json` and `metadata/sid-set-candidates-v1.jsonl` files contain only reproducibility metadata, not image bytes.
 
 ## Install and controlled fixture
 
@@ -38,7 +38,11 @@ Download the pinned candidate pool from the repository root:
 node ./scripts/download-sid-set-candidates.mjs
 ```
 
-The downloader verifies SID_Set revision `dc03ead57929879319ce30a82bfcfb8d317b10bd`, scans the complete train and validation metadata, lets validation retain any stable identity duplicated in training, and ranks identities with split seed `17`. It downloads 150 reserve candidates per upstream split and class, producing 14,600 local candidates and `datasets/sid-set/inventory.jsonl`. Existing non-empty files and cached metadata pages are reused. The reserve is necessary because hashes can only be calculated after download and decode; the command fails rather than relaxing leakage rules if a future audit exhausts it.
+The tracked candidate contract freezes the result of scanning SID_Set revision `dc03ead57929879319ce30a82bfcfb8d317b10bd`, letting validation retain any stable identity duplicated in training, and ranking identities with split seed `17`. It records the upstream split, row, stable image ID, label, relative path, byte length, and SHA-256 for 150 reserve candidates per upstream split and class: 14,600 candidates in total.
+
+Hugging Face's rows API does not accept a dataset revision, so the downloader treats its signed image URLs only as an untrusted transport. It accepts a page only when it is complete and every requested row still has the pinned index, image ID, and label; it accepts a downloaded or existing file only when its byte length and SHA-256 match the tracked contract. Changed upstream rows or bytes therefore fail closed. Permanent HTTP errors are not retried, while rate limits, server failures, and network failures use one bounded retry policy.
+
+The command writes the verified local inventory to `datasets/sid-set/inventory.jsonl`. A teammate may populate `datasets/sid-set/images` from a zip or another local mirror first and then run the same command; matching files are verified and reused without network access. The reserve lets collision-aware production selection backfill after exact or perceptual duplicate detection, and the production command fails rather than relaxing leakage rules if the reserve is exhausted.
 
 Then run:
 

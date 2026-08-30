@@ -1,0 +1,16 @@
+{
+  "candidate_pool_schema_version": "sid-set-candidate-pool-v1",
+  "dataset": "saberzl/SID_Set",
+  "dataset_revision": "dc03ead57929879319ce30a82bfcfb8d317b10bd",
+  "split_seed": 17,
+  "reserve_per_class": 150,
+  "source_count": 14600,
+  "bucket_counts": {
+    "train:class-0": 5150,
+    "train:class-1": 5150,
+    "validation:class-0": 2150,
+    "validation:class-1": 2150
+  },
+  "records_path": "sid-set-candidates-v1.jsonl",
+  "license": "CC-BY-4.0"
+}
