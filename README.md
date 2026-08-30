@@ -47,3 +47,7 @@ Track 5 dataset locations, intended experiment roles, and organizer-set restrict
 ## RGB baseline
 
 The project uses the existing Community Forensics detector as a frozen RGB expert: the checkpoint is evaluated but never retrained. Issue #4 pins the official 384-pixel primary model and 224-pixel smoke fallback, verifies their checksums, and provides shared experiment/directory preprocessing plus label-free JSON inference. See [docs/rgb-expert.md](docs/rgb-expert.md).
+
+## Signal expert
+
+Issue #6 adds the deterministic 26-value signal representation, leakage-safe normalization, reproducible small MLP training, strict feature/logit caches, and corruption-family validation metrics. See [docs/signal-expert.md](docs/signal-expert.md).

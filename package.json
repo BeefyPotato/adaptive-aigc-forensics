@@ -7,7 +7,8 @@
     "fixture": "node ./src/cli.js run-fixture --config ./fixtures/experiment/config.json --output-dir ./artifacts/fixture",
     "track5:fixture": "node ./src/track5-cli.js build-manifest --inventory ./fixtures/track5/inventory.jsonl --dataset-root ./fixtures/track5 --dataset-revision track5-controlled-fixture-v1 --split-plan ./fixtures/track5/split-plan.json --perceptual-distance 0 --output-dir ./artifacts/track5-fixture",
     "test:rgb": "python -m unittest tests/test_rgb_expert.py",
-    "verify": "npm test && npm run test:rgb",
+    "test:signal": "python -m unittest tests/test_signal_expert.py",
+    "verify": "npm test && npm run test:rgb && npm run test:signal",
     "test": "node --test"
   },
   "engines": {
