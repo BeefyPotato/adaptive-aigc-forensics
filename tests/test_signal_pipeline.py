@@ -116,7 +116,11 @@ def _write_fixture(root: Path) -> Path:
         for family, severity, parameters in CONDITIONS:
             observations.append({
                 "observation_schema_version": "track5-observation-v1",
-                **source,
+                **{
+                    field: value
+                    for field, value in source.items()
+                    if field not in {"byte_length", "exact_sha256"}
+                },
                 "variant_id": _variant_id(source["source_id"], family, severity, parameters),
                 "condition_family": family,
                 "severity": severity,
@@ -356,6 +360,105 @@ class SignalPipelineTests(unittest.TestCase):
                 "shard_raw_bytes": 20_000,
             }
             _validate_plan(plan, **arguments)
+
+            first_shard = plan["phases"][0]["shards"][0]
+            first_record = first_shard["records"][0]
+            first_source = next(
+                source
+                for source in first_shard["sources"]
+                if source["source_id"] == first_record["source_id"]
+            )
+            self.assertNotIn("exact_sha256", first_record)
+
+            matching_hash_only = copy.deepcopy(plan)
+            matching_shard = matching_hash_only["phases"][0]["shards"][0]
+            matching_record = matching_shard["records"][0]
+            matching_source = next(
+                source
+                for source in matching_shard["sources"]
+                if source["source_id"] == matching_record["source_id"]
+            )
+            matching_record["exact_sha256"] = matching_source["exact_sha256"]
+            _validate_plan(_rehash_plan(matching_hash_only), **arguments)
+
+            matching_both = copy.deepcopy(plan)
+            matching_shard = matching_both["phases"][0]["shards"][0]
+            matching_record = matching_shard["records"][0]
+            matching_source = next(
+                source
+                for source in matching_shard["sources"]
+                if source["source_id"] == matching_record["source_id"]
+            )
+            matching_source["byte_length"] = 123
+            matching_record.update(
+                byte_length=123,
+                exact_sha256=matching_source["exact_sha256"],
+            )
+            _validate_plan(_rehash_plan(matching_both), **arguments)
+
+            invalid_byte_lengths = (None, "123", True, 0, 2**53)
+            for invalid_byte_length in invalid_byte_lengths:
+                invalid_record_pin = copy.deepcopy(plan)
+                invalid_shard = invalid_record_pin["phases"][0]["shards"][0]
+                invalid_record = invalid_shard["records"][0]
+                invalid_source = next(
+                    source
+                    for source in invalid_shard["sources"]
+                    if source["source_id"] == invalid_record["source_id"]
+                )
+                invalid_record.update(
+                    byte_length=invalid_byte_length,
+                    exact_sha256=invalid_source["exact_sha256"],
+                )
+                with self.subTest(record_byte_length=invalid_byte_length), self.assertRaisesRegex(
+                    ValueError, "byte_length|pin"
+                ):
+                    _validate_plan(_rehash_plan(invalid_record_pin), **arguments)
+
+                invalid_source_pin = copy.deepcopy(plan)
+                invalid_shard = invalid_source_pin["phases"][0]["shards"][0]
+                invalid_record = invalid_shard["records"][0]
+                invalid_source = next(
+                    source
+                    for source in invalid_shard["sources"]
+                    if source["source_id"] == invalid_record["source_id"]
+                )
+                invalid_source["byte_length"] = invalid_byte_length
+                with self.subTest(source_byte_length=invalid_byte_length), self.assertRaisesRegex(
+                    ValueError, "byte_length|pin"
+                ):
+                    _validate_plan(_rehash_plan(invalid_source_pin), **arguments)
+
+            malformed_record_hash = copy.deepcopy(plan)
+            malformed_record_hash["phases"][0]["shards"][0]["records"][0][
+                "exact_sha256"
+            ] = "not-a-sha"
+            with self.assertRaisesRegex(ValueError, "exact_sha256|pin"):
+                _validate_plan(_rehash_plan(malformed_record_hash), **arguments)
+
+            malformed_source_hash = copy.deepcopy(plan)
+            malformed_source_hash["phases"][0]["shards"][0]["sources"][0][
+                "exact_sha256"
+            ] = "not-a-sha"
+            with self.assertRaisesRegex(ValueError, "exact_sha256|pin"):
+                _validate_plan(_rehash_plan(malformed_source_hash), **arguments)
+
+            record_byte_without_hash = copy.deepcopy(plan)
+            record_byte_without_hash["phases"][0]["shards"][0]["records"][0][
+                "byte_length"
+            ] = 123
+            with self.assertRaisesRegex(ValueError, "byte_length.*exact_sha256"):
+                _validate_plan(_rehash_plan(record_byte_without_hash), **arguments)
+
+            source_byte_without_hash = copy.deepcopy(plan)
+            source_byte_without_hash["phases"][0]["shards"][0]["sources"][0].pop(
+                "exact_sha256"
+            )
+            source_byte_without_hash["phases"][0]["shards"][0]["sources"][0][
+                "byte_length"
+            ] = 123
+            with self.assertRaisesRegex(ValueError, "byte_length.*exact_sha256"):
+                _validate_plan(_rehash_plan(source_byte_without_hash), **arguments)
             for oversized_argument in (
                 {"training_count": 2**53},
                 {"sampler_seed": 2**53},
@@ -425,6 +528,13 @@ class SignalPipelineTests(unittest.TestCase):
             ] -= 1
             with self.assertRaisesRegex(ValueError, "raw_byte_estimate"):
                 _validate_plan(_rehash_plan(understated_raw_estimate), **arguments)
+
+            conflicting_observation_pin = copy.deepcopy(plan)
+            conflicting_observation_pin["phases"][0]["shards"][0]["records"][0][
+                "exact_sha256"
+            ] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "exact_sha256"):
+                _validate_plan(_rehash_plan(conflicting_observation_pin), **arguments)
             shard = plan["phases"][0]["shards"][0]
             record = shard["records"][0]
             source = next(

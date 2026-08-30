@@ -291,6 +291,29 @@ def _build_plan(
     return plan
 
 
+def _validate_plan_pin_metadata(value: dict, context: str) -> None:
+    has_byte_length = "byte_length" in value
+    has_exact_sha256 = "exact_sha256" in value
+    if has_byte_length and not has_exact_sha256:
+        raise ValueError(f"{context} byte_length requires exact_sha256.")
+    if has_byte_length:
+        byte_length = value["byte_length"]
+        if (
+            type(byte_length) is not int
+            or byte_length <= 0
+            or byte_length > JAVASCRIPT_MAX_SAFE_INTEGER
+        ):
+            raise ValueError(f"{context} byte_length must be a positive safe integer.")
+    if has_exact_sha256:
+        exact_sha256 = value["exact_sha256"]
+        if (
+            not isinstance(exact_sha256, str)
+            or len(exact_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in exact_sha256)
+        ):
+            raise ValueError(f"{context} exact_sha256 must be lowercase 64-digit hexadecimal.")
+
+
 def _validate_plan(
     plan: dict,
     *,
@@ -404,6 +427,13 @@ def _validate_plan(
             records = shard.get("records")
             if not isinstance(sources, list) or not isinstance(records, list) or not records:
                 raise ValueError("Signal experiment shard sources or records are missing.")
+            if any(not isinstance(source, dict) for source in sources):
+                raise ValueError("Signal experiment shard sources must be objects.")
+            for source_index, source in enumerate(sources):
+                _validate_plan_pin_metadata(
+                    source,
+                    f"Signal experiment plan source {source_index}",
+                )
             shard_source_ids = [source.get("source_id") for source in sources]
             if (
                 any(not isinstance(source_id, str) or not source_id for source_id in shard_source_ids)
@@ -415,7 +445,13 @@ def _validate_plan(
             source_by_id = {source["source_id"]: source for source in sources}
             record_source_ids = set()
             computed_raw_byte_estimate = 0
-            for record in records:
+            for record_index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    raise ValueError("Signal experiment plan records must be objects.")
+                _validate_plan_pin_metadata(
+                    record,
+                    f"Signal experiment plan record {record_index}",
+                )
                 source_id = record.get("source_id")
                 variant_id = record.get("variant_id")
                 weight = record.get("sample_weight")
@@ -460,14 +496,19 @@ def _validate_plan(
                     "split",
                     "width",
                     "height",
-                    "byte_length",
-                    "exact_sha256",
                 ):
                     if field in source or field in record:
                         if not _strict_json_equal(source.get(field), record.get(field)):
                             raise ValueError(
                                 f"Signal experiment plan record contradicts its source {field}."
                             )
+                for field in ("byte_length", "exact_sha256"):
+                    if field in record and not _strict_json_equal(
+                        source.get(field), record.get(field)
+                    ):
+                        raise ValueError(
+                            f"Signal experiment plan record contradicts its source {field}."
+                        )
                 phase_variants.add(variant_id)
                 record_source_ids.add(source_id)
                 labels.add(label)
