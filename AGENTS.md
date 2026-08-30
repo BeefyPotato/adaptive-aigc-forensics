@@ -1,3 +1,7 @@
+## Git workflow
+
+For every GitHub issue that changes tracked files, create an issue-specific feature branch from `main` before editing. Commit and verify the work on that branch. Merge the completed branch into `main` and push `main` only after the issue's acceptance criteria pass. `main` receives issue work through completed branch merges, not direct implementation commits.
+
 ## Agent skills
 
 ### Issue tracker
