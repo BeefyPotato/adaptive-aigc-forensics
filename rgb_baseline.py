@@ -27,17 +27,17 @@ def _finite_number(value: object, name: str) -> float:
     return float(value)
 
 
-def _auroc(records: list[dict]) -> float:
+def _auroc(records: list[dict], score_field: str) -> float:
     positives = sum(record["authenticity_label"] == 1 for record in records)
     negatives = len(records) - positives
     if not positives or not negatives:
         raise ValueError("AUROC requires both authenticity classes.")
-    ordered = sorted(records, key=lambda record: record["rgb_logit"])
+    ordered = sorted(records, key=lambda record: record[score_field])
     rank_sum = 0.0
     offset = 0
     while offset < len(ordered):
         end = offset + 1
-        while end < len(ordered) and ordered[end]["rgb_logit"] == ordered[offset]["rgb_logit"]:
+        while end < len(ordered) and ordered[end][score_field] == ordered[offset][score_field]:
             end += 1
         average_rank = ((offset + 1) + end) / 2
         rank_sum += average_rank * sum(
@@ -47,19 +47,19 @@ def _auroc(records: list[dict]) -> float:
     return (rank_sum - positives * (positives + 1) / 2) / (positives * negatives)
 
 
-def _threshold_diagnostics(records: list[dict]) -> dict:
+def _threshold_diagnostics(records: list[dict], score_field: str) -> dict:
     positives = sum(record["authenticity_label"] == 1 for record in records)
     negatives = len(records) - positives
     if positives == 0 or negatives == 0:
         raise ValueError("Threshold selection requires both authenticity classes.")
-    ordered = sorted(records, key=lambda record: record["rgb_logit"], reverse=True)
+    ordered = sorted(records, key=lambda record: record[score_field], reverse=True)
     true_positives = false_positives = 0
     best = None
     offset = 0
     while offset < len(ordered):
-        threshold = ordered[offset]["rgb_logit"]
+        threshold = ordered[offset][score_field]
         end = offset
-        while end < len(ordered) and ordered[end]["rgb_logit"] == threshold:
+        while end < len(ordered) and ordered[end][score_field] == threshold:
             true_positives += ordered[end]["authenticity_label"] == 1
             false_positives += ordered[end]["authenticity_label"] == 0
             end += 1
@@ -80,14 +80,21 @@ def _threshold_diagnostics(records: list[dict]) -> dict:
     }
 
 
-def evaluate_internal_validation(cache_records: Iterable[dict]) -> dict:
+def evaluate_internal_validation(
+    cache_records: Iterable[dict],
+    *,
+    score_field: str = "rgb_logit",
+    metric_schema_version: str = "rgb-robustness-metric-v1",
+) -> dict:
     records = [record for record in cache_records if record.get("split") == "internal-validation"]
     if not records:
         raise ValueError("Internal-validation metrics require internal-validation records.")
     for index, record in enumerate(records):
         if record.get("authenticity_label") not in (0, 1):
             raise ValueError(f"Internal-validation record {index} requires a binary authenticity label.")
-        _finite_number(record.get("rgb_logit"), f"Internal-validation record {index}.rgb_logit")
+        _finite_number(
+            record.get(score_field), f"Internal-validation record {index}.{score_field}"
+        )
 
     by_condition = {}
     for family in ("clean", *METRIC_FAMILIES):
@@ -96,7 +103,10 @@ def evaluate_internal_validation(cache_records: Iterable[dict]) -> dict:
             raise ValueError(f"Internal-validation records are missing condition family {family}.")
         severities = sorted({str(record.get("severity")) for record in family_records})
         by_severity = {
-            severity: _auroc([record for record in family_records if str(record.get("severity")) == severity])
+            severity: _auroc(
+                [record for record in family_records if str(record.get("severity")) == severity],
+                score_field,
+            )
             for severity in severities
         }
         by_condition[family] = {
@@ -116,7 +126,7 @@ def evaluate_internal_validation(cache_records: Iterable[dict]) -> dict:
     )
     mean_corrupted = sum(corrupted.values()) / len(corrupted)
     return {
-        "metric_schema_version": "rgb-robustness-metric-v1",
+        "metric_schema_version": metric_schema_version,
         "evaluation_split": "internal-validation",
         "clean_auroc": clean,
         "corruption_families": by_condition,
@@ -125,7 +135,7 @@ def evaluate_internal_validation(cache_records: Iterable[dict]) -> dict:
         "worst_family_severity": {"family": worst[1], "severity": worst[2], "auroc": worst[0]},
         "degradation_drop": clean - mean_corrupted,
         "degradation_retention": mean_corrupted / clean if clean else None,
-        "threshold_diagnostics": _threshold_diagnostics(records),
+        "threshold_diagnostics": _threshold_diagnostics(records, score_field),
     }
 
 

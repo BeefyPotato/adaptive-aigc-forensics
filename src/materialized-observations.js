@@ -1,11 +1,25 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import sharp from "sharp";
 
-import { ContractError, requireFields, requireNonemptyString, requireObject } from "./contract-validation.js";
+import { writeFileAtomically } from "./atomic-file.js";
+
+import {
+  ContractError,
+  requireFields,
+  requireLowercaseHex,
+  requireNonemptyString,
+  requireNonnegativeInteger,
+  requireObject,
+} from "./contract-validation.js";
 import { applyCorruption, decodeSourceImage } from "./corruption-harness.js";
+import {
+  ensureManagedDirectory,
+  managedOutputPath,
+  resolveManagedOutputRoot,
+} from "./managed-output.js";
 
 const CONTROLLED_SPLITS = new Set([
   "expert-training",
@@ -14,28 +28,127 @@ const CONTROLLED_SPLITS = new Set([
   "sealed-internal-test",
 ]);
 
-function containedPath(root, path, field) {
+function pathEscapesRoot(root, path) {
+  const relation = relative(root, path);
+  return relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation);
+}
+
+async function containedPath(root, path, field) {
   requireNonemptyString(path, field, "Track 5 materialization");
   if (isAbsolute(path)) {
     throw new ContractError(`Track 5 materialization.${field} must be relative.`);
   }
   const absoluteRoot = resolve(root);
   const absolutePath = resolve(absoluteRoot, path);
-  const relation = relative(absoluteRoot, absolutePath);
-  if (relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation)) {
+  if (pathEscapesRoot(absoluteRoot, absolutePath)) {
     throw new ContractError(`Track 5 materialization.${field} escapes the dataset root.`);
   }
-  return absolutePath;
+  let resolvedRoot;
+  let resolvedPath;
+  try {
+    [resolvedRoot, resolvedPath] = await Promise.all([
+      realpath(absoluteRoot),
+      realpath(absolutePath),
+    ]);
+  } catch {
+    throw new ContractError(
+      `Track 5 materialization.${field} could not be resolved within the dataset root.`,
+    );
+  }
+  if (pathEscapesRoot(resolvedRoot, resolvedPath)) {
+    throw new ContractError(`Track 5 materialization.${field} escapes the dataset root.`);
+  }
+  return resolvedPath;
 }
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function validateDeclaredRuntime(corruption) {
+  const hasSharpVersion = Object.hasOwn(corruption, "sharp_version");
+  const hasLibvipsVersion = Object.hasOwn(corruption, "libvips_version");
+  if (hasSharpVersion !== hasLibvipsVersion) {
+    throw new ContractError(
+      "Track 5 manifest.corruption must declare sharp_version and libvips_version together.",
+    );
+  }
+  if (!hasSharpVersion) return;
+  for (const [field, actual] of [
+    ["sharp_version", sharp.versions.sharp],
+    ["libvips_version", sharp.versions.vips],
+  ]) {
+    requireNonemptyString(corruption[field], field, "Track 5 manifest.corruption");
+    if (corruption[field] !== actual) {
+      throw new ContractError(
+        `Track 5 manifest.corruption.${field} is incompatible: ` +
+          `declared ${corruption[field]}, runtime ${actual}.`,
+      );
+    }
+  }
+}
+
+function validateDeclaredGeometry(record, contractName) {
+  const hasWidth = Object.hasOwn(record, "width");
+  const hasHeight = Object.hasOwn(record, "height");
+  if (hasWidth !== hasHeight) {
+    throw new ContractError(`${contractName} must declare width and height together.`);
+  }
+  if (!hasWidth) return false;
+  for (const field of ["width", "height"]) {
+    requireNonnegativeInteger(record[field], field, contractName);
+    if (record[field] === 0) {
+      throw new ContractError(`${contractName}.${field} must be positive.`);
+    }
+  }
+  return true;
+}
+
+function validatePinnedSourceMetadata(record, contractName) {
+  const hasByteLength = Object.hasOwn(record, "byte_length");
+  const hasExactSha256 = Object.hasOwn(record, "exact_sha256");
+  if (hasByteLength && !hasExactSha256) {
+    throw new ContractError(
+      `${contractName}.byte_length requires exact_sha256.`,
+    );
+  }
+  if (hasByteLength) {
+    requireNonnegativeInteger(record.byte_length, "byte_length", contractName);
+    if (record.byte_length === 0) {
+      throw new ContractError(`${contractName}.byte_length must be positive.`);
+    }
+  }
+  if (!hasExactSha256) return false;
+  requireLowercaseHex(record.exact_sha256, "exact_sha256", 64, contractName);
+  return true;
+}
+
+async function verifiedPinnedSourceBytes(sourcePath, source) {
+  if (!Object.hasOwn(source, "exact_sha256")) return undefined;
+  let bytes;
+  try {
+    bytes = await readFile(sourcePath);
+  } catch (error) {
+    throw new ContractError(
+      `Track 5 source ${source.source_id} could not be read before decode: ${error.message}`,
+    );
+  }
+  if (Object.hasOwn(source, "byte_length") && bytes.length !== source.byte_length) {
+    throw new ContractError(
+      `Track 5 source ${source.source_id} does not match its pinned byte length ` +
+        `(received ${bytes.length}, expected ${source.byte_length}).`,
+    );
+  }
+  if (sha256(bytes) !== source.exact_sha256) {
+    throw new ContractError(
+      `Track 5 source ${source.source_id} does not match its pinned SHA-256.`,
+    );
+  }
+  return bytes;
+}
+
 async function writeAtomically(path, bytes) {
-  const temporaryPath = `${path}.tmp-${process.pid}`;
-  await writeFile(temporaryPath, bytes);
-  await rename(temporaryPath, path);
+  await writeFileAtomically(path, bytes);
 }
 
 async function mapWithConcurrency(values, concurrency, mapper) {
@@ -77,15 +190,19 @@ export async function materializeTrack5Observations(
     ["preprocessing_version", "transform_implementation_version"],
     "Track 5 manifest.corruption",
   );
+  validateDeclaredRuntime(manifest.corruption);
 
   const sourceById = new Map();
   for (const [index, source] of manifest.sources.entries()) {
-    requireObject(source, `Track 5 source ${index}`);
+    const contractName = `Track 5 source ${index}`;
+    requireObject(source, contractName);
     requireFields(
       source,
       ["source_id", "image_path", "authenticity_label", "split"],
-      `Track 5 source ${index}`,
+      contractName,
     );
+    validatePinnedSourceMetadata(source, contractName);
+    validateDeclaredGeometry(source, contractName);
     if (!CONTROLLED_SPLITS.has(source.split) || ![0, 1].includes(source.authenticity_label)) {
       throw new ContractError(`Track 5 source ${index} is outside the controlled binary partitions.`);
     }
@@ -98,7 +215,8 @@ export async function materializeTrack5Observations(
   const seenVariants = new Set();
   const observationsBySource = new Map();
   for (const [index, observation] of manifest.observations.entries()) {
-    requireObject(observation, `Track 5 observation ${index}`);
+    const contractName = `Track 5 observation ${index}`;
+    requireObject(observation, contractName);
     requireFields(
       observation,
       [
@@ -113,8 +231,10 @@ export async function materializeTrack5Observations(
         "corruption_seed",
         "transform_implementation_version",
       ],
-      `Track 5 observation ${index}`,
+      contractName,
     );
+    const observationHasPinnedHash = validatePinnedSourceMetadata(observation, contractName);
+    const observationHasGeometry = validateDeclaredGeometry(observation, contractName);
     if (seenVariants.has(observation.variant_id)) {
       throw new ContractError(`Track 5 manifest repeats variant ${observation.variant_id}.`);
     }
@@ -131,6 +251,25 @@ export async function materializeTrack5Observations(
       throw new ContractError(`Track 5 observation ${observation.variant_id} disagrees with its source.`);
     }
     if (
+      observationHasGeometry &&
+      Object.hasOwn(source, "width") &&
+      (observation.width !== source.width || observation.height !== source.height)
+    ) {
+      throw new ContractError(
+        `Track 5 observation ${observation.variant_id} has incompatible native dimensions.`,
+      );
+    }
+    if (
+      observationHasPinnedHash &&
+      (observation.exact_sha256 !== source.exact_sha256 ||
+        (Object.hasOwn(observation, "byte_length") &&
+          observation.byte_length !== source.byte_length))
+    ) {
+      throw new ContractError(
+        `Track 5 observation ${observation.variant_id} has incompatible pinned source bytes.`,
+      );
+    }
+    if (
       observation.transform_implementation_version !==
       manifest.corruption.transform_implementation_version
     ) {
@@ -141,25 +280,62 @@ export async function materializeTrack5Observations(
     observationsBySource.set(observation.source_id, grouped);
   }
 
-  const absoluteOutput = resolve(outputDirectory);
-  const imageDirectory = resolve(absoluteOutput, "observations");
-  await mkdir(imageDirectory, { recursive: true });
+  const absoluteOutput = await resolveManagedOutputRoot(
+    outputDirectory,
+    "Track 5 materialization root",
+  );
+  const imageDirectory = await ensureManagedDirectory(
+    absoluteOutput,
+    "observations",
+    "Track 5 observations directory",
+  );
   const materialized = new Array(manifest.observations.length);
   await mapWithConcurrency(
     [...observationsBySource.values()],
     concurrency,
     async (group) => {
-      const sourcePath = containedPath(datasetRoot, group[0].observation.image_path, "image_path");
-      const decoded = await decodeSourceImage(sourcePath);
+      const sourcePath = await containedPath(
+        datasetRoot,
+        group[0].observation.image_path,
+        "image_path",
+      );
+      const source = sourceById.get(group[0].observation.source_id);
+      const pinnedBytes = await verifiedPinnedSourceBytes(sourcePath, source);
+      const decoded = await decodeSourceImage(
+        pinnedBytes ?? sourcePath,
+        pinnedBytes === undefined
+          ? undefined
+          : `verified source bytes for Track 5 source ${JSON.stringify(source.source_id)}`,
+      );
       for (const { index, observation } of group) {
         const corrupted = await applyCorruption(decoded, observation);
+        const expectedWidth = observation.width ?? source.width;
+        const expectedHeight = observation.height ?? source.height;
+        if (
+          corrupted.channels !== 3 ||
+          (expectedWidth !== undefined &&
+            (corrupted.width !== expectedWidth || corrupted.height !== expectedHeight))
+        ) {
+          const declaredGeometry =
+            expectedWidth === undefined ? "three-channel RGB" : `${expectedWidth}x${expectedHeight}x3`;
+          throw new ContractError(
+            `Track 5 corruption result for ${observation.variant_id} disagrees with declared ` +
+              `native RGB geometry ${declaredGeometry}; received ` +
+              `${corrupted.width}x${corrupted.height}x${corrupted.channels}.`,
+          );
+        }
         const bytes = await sharp(corrupted.data, {
           raw: { width: corrupted.width, height: corrupted.height, channels: corrupted.channels },
         })
           .png({ compressionLevel: 9, adaptiveFiltering: false, palette: false })
           .toBuffer();
         const filename = `${sha256(observation.variant_id)}.png`;
-        await writeAtomically(resolve(imageDirectory, filename), bytes);
+        const imagePath = await managedOutputPath(
+          absoluteOutput,
+          `observations/${filename}`,
+          `Track 5 observation ${observation.variant_id}`,
+        );
+        await writeAtomically(imagePath, bytes);
         materialized[index] = Object.freeze({
           ...observation,
           materialized_image_path: `observations/${filename}`,
@@ -176,6 +352,8 @@ export async function materializeTrack5Observations(
     materialization: Object.freeze({
       shared_observation_preprocessing_version: manifest.corruption.preprocessing_version,
       corruption_version: manifest.corruption.transform_implementation_version,
+      sharp_version: sharp.versions.sharp,
+      libvips_version: sharp.versions.vips,
       encoding: "lossless-rgb-png-v1",
       observation_count: materialized.length,
     }),
@@ -184,6 +362,14 @@ export async function materializeTrack5Observations(
 }
 
 export async function writeMaterializedManifest(path, manifest) {
-  await mkdir(resolve(path, ".."), { recursive: true });
-  await writeAtomically(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  const root = await resolveManagedOutputRoot(
+    dirname(resolve(path)),
+    "Track 5 materialized manifest root",
+  );
+  const manifestPath = await managedOutputPath(
+    root,
+    basename(path),
+    "Track 5 materialized manifest",
+  );
+  await writeAtomically(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }

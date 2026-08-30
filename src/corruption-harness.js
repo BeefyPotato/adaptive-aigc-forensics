@@ -45,13 +45,15 @@ function validateObservation(observation) {
   }
 }
 
-export async function decodeSourceImage(path) {
+export async function decodeSourceImage(input, sourceDescription) {
+  const description =
+    sourceDescription ?? (Buffer.isBuffer(input) ? "verified source bytes" : input);
   try {
-    return await rawObservation(sharp(path, { failOn: "error" }).autoOrient(), {
+    return await rawObservation(sharp(input, { failOn: "error" }).autoOrient(), {
       operation: "decode",
     });
   } catch (error) {
-    throw new ContractError(`source image could not be decoded from ${path}: ${error.message}`);
+    throw new ContractError(`source image could not be decoded from ${description}: ${error.message}`);
   }
 }
 

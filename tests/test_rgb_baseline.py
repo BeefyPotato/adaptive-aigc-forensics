@@ -143,12 +143,89 @@ class RgbBaselineTests(unittest.TestCase):
                     ]
                 )
         metrics = evaluate_internal_validation(records)
+        explicit_legacy_metrics = evaluate_internal_validation(
+            records,
+            score_field="rgb_logit",
+            metric_schema_version="rgb-robustness-metric-v1",
+        )
+        self.assertEqual(metrics, explicit_legacy_metrics)
+        self.assertEqual(metrics["metric_schema_version"], "rgb-robustness-metric-v1")
         self.assertEqual(metrics["clean_auroc"], 1.0)
         self.assertEqual(metrics["mean_corrupted_auroc"], 1.0)
         self.assertEqual(metrics["all_condition_macro_auroc"], 1.0)
         self.assertEqual(metrics["degradation_drop"], 0.0)
         self.assertEqual(metrics["degradation_retention"], 1.0)
         self.assertEqual(metrics["threshold_diagnostics"]["status"], "provisional-internal-validation-only")
+
+    def test_signal_logits_use_the_same_severity_first_family_macro_evaluator(self):
+        records = [
+            {
+                "split": "internal-validation",
+                "condition_family": "clean",
+                "severity": "clean",
+                "authenticity_label": label,
+                "signal_logit": score,
+            }
+            for label, score in ((0, -2.0), (1, 2.0))
+        ]
+        for family in ("jpeg", "blur", "resize", "noise", "color", "crop"):
+            records.extend(
+                {
+                    "split": "internal-validation",
+                    "condition_family": family,
+                    "severity": severity,
+                    "authenticity_label": label,
+                    "signal_logit": score,
+                }
+                for severity, scored_labels in (
+                    ("low", ((0, -1.0), (1, 1.0))),
+                    ("high", ((0, 1.0), (1, -1.0))),
+                )
+                for label, score in scored_labels
+            )
+
+        metrics = evaluate_internal_validation(
+            records,
+            score_field="signal_logit",
+            metric_schema_version="signal-robustness-metric-v1",
+        )
+
+        self.assertEqual(metrics["metric_schema_version"], "signal-robustness-metric-v1")
+        self.assertEqual(metrics["clean_auroc"], 1.0)
+        self.assertEqual(metrics["corruption_families"]["jpeg"]["auroc_by_severity"], {"high": 0.0, "low": 1.0})
+        self.assertEqual(metrics["corruption_families"]["jpeg"]["auroc"], 0.5)
+        self.assertEqual(metrics["mean_corrupted_auroc"], 0.5)
+        self.assertAlmostEqual(metrics["all_condition_macro_auroc"], 4 / 7)
+        self.assertEqual(
+            metrics["worst_family_severity"],
+            {"family": "blur", "severity": "high", "auroc": 0.0},
+        )
+        self.assertEqual(
+            metrics["threshold_diagnostics"]["status"],
+            "provisional-internal-validation-only",
+        )
+        self.assertEqual(metrics["threshold_diagnostics"]["threshold_logit"], 2.0)
+
+    def test_evaluator_checks_that_the_selected_score_field_is_finite(self):
+        records = [
+            {
+                "split": "internal-validation",
+                "condition_family": family,
+                "severity": "clean" if family == "clean" else "low",
+                "authenticity_label": label,
+                "rgb_logit": 0.0,
+                "signal_logit": float("nan") if family == "clean" and label == 0 else float(label),
+            }
+            for family in ("clean", "jpeg", "blur", "resize", "noise", "color", "crop")
+            for label in (0, 1)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "signal_logit must be a finite number"):
+            evaluate_internal_validation(
+                records,
+                score_field="signal_logit",
+                metric_schema_version="signal-robustness-metric-v1",
+            )
 
     def test_rerun_comparison_uses_declared_tolerance(self):
         expected = [{"variant_id": "a", "rgb_logit": 0.25}]
