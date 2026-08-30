@@ -11,6 +11,7 @@ from rgb_baseline import (
     write_json,
 )
 from rgb_expert import CommunityForensicsBackend, download_checkpoint, load_model_metadata
+from rgb_expert import predict_experiment_observations
 
 
 def main() -> None:
@@ -41,12 +42,16 @@ def main() -> None:
     validate_rgb_cache(cache, manifest, resolution=arguments.resolution)
     metrics = evaluate_internal_validation(cache["records"])
     subset = cache["records"][: min(arguments.batch_size, len(cache["records"]))]
-    subset_observations = [
-        {**next(item for item in manifest["observations"] if item["variant_id"] == record["variant_id"]),
-         "image_path": arguments.dataset_root / next(item for item in manifest["observations"] if item["variant_id"] == record["variant_id"]).get("materialized_image_path", next(item for item in manifest["observations"] if item["variant_id"] == record["variant_id"])["image_path"])}
-        for record in subset
-    ]
-    from rgb_expert import predict_experiment_observations
+    observation_by_variant = {item["variant_id"]: item for item in manifest["observations"]}
+    subset_observations = []
+    for record in subset:
+        observation = observation_by_variant[record["variant_id"]]
+        subset_observations.append(
+            {
+                **observation,
+                "image_path": arguments.dataset_root / observation["materialized_image_path"],
+            }
+        )
     repeated = predict_experiment_observations(subset_observations, backend, resolution=arguments.resolution, batch_size=arguments.batch_size)
     rerun = compare_deterministic_subset(subset, repeated, load_model_metadata()["numeric_tolerance"])
     write_json(arguments.output_dir / "rgb-logits.json", cache)

@@ -1,6 +1,6 @@
 # Signal expert
 
-Issue #6 adds a deterministic, low-cost signal expert that consumes the same native-resolution corrupted RGB observation as the RGB expert. Corruption happens first. The RGB branch then performs its checkpoint resize/crop/normalization, while this branch converts the unresized observation to luminance in `[0, 1]`.
+Issue #6 adds a deterministic, low-cost signal expert that consumes the same corrupted RGB observation and shared checkpoint crop as the RGB expert. Corruption happens first. Both branches apply the common resize/center-crop geometry; the RGB branch then applies checkpoint normalization, while this branch converts the shared crop to luminance in `[0, 1]`. Native dimensions remain available as materialization metadata for later quality evidence.
 
 ## Signal representation
 

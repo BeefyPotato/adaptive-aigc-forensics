@@ -83,6 +83,22 @@ Every source has one clean observation and the following symmetric class-indepen
 | Atomic color | brightness, contrast, or saturation × 0.8 or 1.2 | Exactly one named property changes in each variant. |
 | Center crop | retain centered 80% | Rounded crop geometry, then bicubic restoration. |
 
+## Materialized observation handoff
+
+`track5-manifest.json` stores deterministic recipes and source paths; it does not pretend the source path contains corrupted pixels. Resolve every recipe through the canonical corruption harness before running either expert:
+
+```shell
+node ./scripts/materialize-track5-observations.mjs \
+  --manifest ./artifacts/track5-production/track5-manifest.json \
+  --dataset-root ./datasets/sid-set/images \
+  --output-dir ./artifacts/track5-materialized \
+  --concurrency 4
+```
+
+This writes lossless RGB PNGs plus `track5-materialized-manifest.json`. The latter uses `track5-materialized-observations-v1`; every observation retains the Issue #3 recipe and adds `materialized_image_path`, `materialized_sha256`, and `materialized_encoding`. Paths are relative to the materialized output root and cannot escape it. Work is grouped by source so only the configured number of decoded source images need to remain in memory.
+
+The lossless materialized artifact is the shared post-corruption pixel handoff. Both branches use `prepare_shared_expert_rgb` for the checkpoint resize/center crop. RGB normalization and signal luminance extraction are branch-specific operations afterward; their versions must not be confused with the shared observation preprocessing version.
+
 The runtime records exact Sharp and libvips versions. `sharp` is pinned in `package-lock.json`, and the tests inspect encoded JPEG metadata, blur behavior, resize dimensions and kernels, noise repeatability and clamping, atomic color parameters, and crop geometry.
 
 ## Leakage and organizer policy

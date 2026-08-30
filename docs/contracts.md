@@ -27,6 +27,8 @@ The checked-in example is [fixtures/experiment/config.json](../fixtures/experime
 
 The resolved manifest records the explicit corruption seed and a `variant-v1-<sha256>` identifier. The digest is computed from canonical JSON containing source identity, condition family, parameters, seed, preprocessing version, and artifact schema version. This keeps all observations derived from a source joinable without machine-specific paths.
 
+The Track 5 production manifest is a recipe contract: its `image_path` identifies the source image, not already-corrupted bytes. Before either production expert runs, the recipe is resolved into `track5-materialized-observations-v1`. Each materialized observation retains its source/variant identity and adds a contained relative PNG path, SHA-256, and lossless encoding version. Both branches decode that same artifact. `shared_observation_preprocessing_version` describes decode/orientation/corruption materialization; `rgb_preprocessing_version` separately describes the RGB checkpoint resize, crop, tensor conversion, and normalization.
+
 Issue #2 intentionally implements only the checked-in `noise` corruption fixture. The complete corruption harness belongs to later tickets.
 
 ## Cache artifacts
