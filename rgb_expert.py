@@ -231,6 +231,12 @@ class CommunityForensicsBackend:
     def device(self) -> str:
         return self._device
 
+    @property
+    def peak_memory_bytes(self) -> int | None:
+        if not self._device.startswith("cuda"):
+            return None
+        return int(self._torch.cuda.max_memory_allocated(self._device))
+
     def predict_logits(self, batch: np.ndarray) -> np.ndarray:
         tensor = self._torch.from_numpy(batch).to(self._device)
         with self._torch.inference_mode():
