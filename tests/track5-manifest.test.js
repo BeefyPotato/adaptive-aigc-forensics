@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
+import * as track5ManifestModule from "../src/track5-manifest.js";
 import {
   assertLeakageAuditPassed,
   auditTrack5Sources,
@@ -22,7 +24,10 @@ function inventoryRecord({ datasetSplit, index, label }) {
     width: 1024,
     height: 768,
     exact_sha256: uniqueNumber.toString(16).padStart(64, "0"),
-    perceptual_hash: uniqueNumber.toString(16).padStart(16, "0"),
+    perceptual_hash: createHash("sha256")
+      .update(`track5-test-perceptual\0${imgId}`, "utf8")
+      .digest("hex")
+      .slice(0, 16),
     provenance: {
       source_dataset: label === 0 ? "OpenImages V7" : "SID_Set",
       source_reference: imgId,
@@ -46,6 +51,69 @@ function productionSizedInventory() {
   }
   return records;
 }
+
+test("Track 5 candidate planning adds deterministic reserves and protects validation identities", () => {
+  assert.equal(
+    typeof track5ManifestModule.selectTrack5CandidateInventoryRecords,
+    "function",
+  );
+  const sharedTraining = {
+    ...inventoryRecord({ datasetSplit: "train", index: 3, label: 0 }),
+    img_id: "shared-authentic",
+  };
+  const sharedValidation = {
+    ...inventoryRecord({ datasetSplit: "validation", index: 3, label: 0 }),
+    img_id: "shared-authentic",
+  };
+  const inventory = [
+    ...[0, 1, 2].map((index) =>
+      inventoryRecord({ datasetSplit: "train", index, label: 0 }),
+    ),
+    sharedTraining,
+    ...[0, 1, 2].map((index) =>
+      inventoryRecord({ datasetSplit: "train", index, label: 1 }),
+    ),
+    sharedValidation,
+    inventoryRecord({ datasetSplit: "validation", index: 0, label: 0 }),
+    ...[0, 1].map((index) =>
+      inventoryRecord({ datasetSplit: "validation", index, label: 1 }),
+    ),
+    inventoryRecord({ datasetSplit: "train", index: 0, label: 2 }),
+  ];
+  const options = {
+    reservePerClass: 1,
+    splitPlan: [
+      { split: "expert-training", datasetSplit: "train", perClass: 1 },
+      { split: "internal-validation", datasetSplit: "validation", perClass: 1 },
+    ],
+    splitSeed: 17,
+  };
+
+  const selected = track5ManifestModule.selectTrack5CandidateInventoryRecords(
+    inventory,
+    options,
+  );
+  const repeated = track5ManifestModule.selectTrack5CandidateInventoryRecords(
+    inventory.toReversed(),
+    options,
+  );
+
+  const identities = selected.map(
+    ({ dataset_split: datasetSplit, img_id: imgId, label }) =>
+      `${datasetSplit}:class-${label}:${imgId}`,
+  );
+  assert.deepEqual(identities, [
+    "train:class-0:authentic-train-00001",
+    "train:class-0:authentic-train-00000",
+    "train:class-1:full-synthetic-train-00000",
+    "train:class-1:full-synthetic-train-00001",
+    "validation:class-0:shared-authentic",
+    "validation:class-0:authentic-validation-00000",
+    "validation:class-1:full-synthetic-validation-00001",
+    "validation:class-1:full-synthetic-validation-00000",
+  ]);
+  assert.deepEqual(selected, repeated);
+});
 
 test("Track 5 sources are class-balanced, source-disjoint, and selected before variants", () => {
   const inventory = productionSizedInventory();
@@ -87,6 +155,186 @@ test("Track 5 sources are class-balanced, source-disjoint, and selected before v
     assert.equal(source.dataset_revision, "saberzl/SID_Set@dc03ead");
   }
   assert.deepEqual(actualCounts, expectedCounts);
+});
+
+test("Track 5 selection backfills exact and perceptual cross-partition collisions", () => {
+  const collisionHashes = new Map([
+    [
+      "authentic-train-00000",
+      { exact_sha256: "1".repeat(64), perceptual_hash: "0000000000000000" },
+    ],
+    [
+      "authentic-train-00001",
+      { exact_sha256: "1".repeat(64), perceptual_hash: "0000000000000000" },
+    ],
+    [
+      "authentic-train-00002",
+      { exact_sha256: "2".repeat(64), perceptual_hash: "ffffffffffffffff" },
+    ],
+    [
+      "full-synthetic-train-00000",
+      { exact_sha256: "3".repeat(64), perceptual_hash: "aaaaaaaaaaaaaaaa" },
+    ],
+    [
+      "full-synthetic-train-00001",
+      { exact_sha256: "4".repeat(64), perceptual_hash: "aaaaaaaaaaaaaaab" },
+    ],
+    [
+      "full-synthetic-train-00002",
+      { exact_sha256: "5".repeat(64), perceptual_hash: "5555555555555555" },
+    ],
+  ]);
+  const inventory = [];
+  for (const label of [0, 1]) {
+    for (let index = 0; index < 3; index += 1) {
+      const record = inventoryRecord({ datasetSplit: "train", index, label });
+      inventory.push({ ...record, ...collisionHashes.get(record.img_id) });
+    }
+  }
+
+  const selected = selectTrack5Sources(inventory, {
+    datasetRevision: "saberzl/SID_Set@dc03ead",
+    perceptualDistance: 4,
+    splitSeed: 17,
+    splitPlan: [
+      { split: "expert-training", datasetSplit: "train", perClass: 1 },
+      { split: "fusion-training", datasetSplit: "train", perClass: 1 },
+    ],
+  });
+
+  assert.deepEqual(
+    selected.map(({ source_id: sourceId }) => sourceId),
+    [
+      "sid-set:authentic-train-00001",
+      "sid-set:full-synthetic-train-00000",
+      "sid-set:authentic-train-00002",
+      "sid-set:full-synthetic-train-00002",
+    ],
+  );
+  assert.equal(auditTrack5Sources(selected, { perceptualDistance: 4 }).status, "passed");
+});
+
+test("Track 5 selection reports the collision-free count when reserves are exhausted", () => {
+  const inventory = [];
+  for (const label of [0, 1]) {
+    for (let index = 0; index < 2; index += 1) {
+      inventory.push({
+        ...inventoryRecord({ datasetSplit: "train", index, label }),
+        exact_sha256: String(label + 1).repeat(64),
+        perceptual_hash: String(label + 1).repeat(16),
+      });
+    }
+  }
+
+  assert.throws(
+    () =>
+      selectTrack5Sources(inventory, {
+        datasetRevision: "saberzl/SID_Set@dc03ead",
+        perceptualDistance: 0,
+        splitSeed: 17,
+        splitPlan: [
+          { split: "expert-training", datasetSplit: "train", perClass: 1 },
+          { split: "fusion-training", datasetSplit: "train", perClass: 1 },
+        ],
+      }),
+    /2 collision-free sources are required through fusion-training, but 1 were found/i,
+  );
+});
+
+test("Track 5 selection protects validation candidates before backfilling training", () => {
+  const inventory = [
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 0, label: 0 }),
+      exact_sha256: "2".repeat(64),
+      perceptual_hash: "ffffffffffffffff",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 1, label: 0 }),
+      exact_sha256: "1".repeat(64),
+      perceptual_hash: "0000000000000000",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "validation", index: 0, label: 0 }),
+      exact_sha256: "1".repeat(64),
+      perceptual_hash: "0000000000000000",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 0, label: 1 }),
+      exact_sha256: "3".repeat(64),
+      perceptual_hash: "aaaaaaaaaaaaaaaa",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 1, label: 1 }),
+      exact_sha256: "4".repeat(64),
+      perceptual_hash: "5555555555555555",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "validation", index: 0, label: 1 }),
+      exact_sha256: "5".repeat(64),
+      perceptual_hash: "aaaaaaaaaaaaaaab",
+    },
+  ];
+  const selected = selectTrack5Sources(inventory, {
+    datasetRevision: "saberzl/SID_Set@dc03ead",
+    perceptualDistance: 4,
+    splitSeed: 17,
+    splitPlan: [
+      { split: "expert-training", datasetSplit: "train", perClass: 1 },
+      { split: "internal-validation", datasetSplit: "validation", perClass: 1 },
+    ],
+  });
+
+  assert.deepEqual(
+    selected.map(({ source_id: sourceId }) => sourceId),
+    [
+      "sid-set:authentic-train-00000",
+      "sid-set:full-synthetic-train-00001",
+      "sid-set:authentic-validation-00000",
+      "sid-set:full-synthetic-validation-00000",
+    ],
+  );
+  assert.equal(auditTrack5Sources(selected, { perceptualDistance: 4 }).status, "passed");
+});
+
+test("Track 5 manifest uses its configured perceptual distance during selection", () => {
+  const inventory = [
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 0, label: 0 }),
+      exact_sha256: "1".repeat(64),
+      perceptual_hash: "0000000000000000",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 1, label: 0 }),
+      exact_sha256: "2".repeat(64),
+      perceptual_hash: "0000000000000001",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 0, label: 1 }),
+      exact_sha256: "3".repeat(64),
+      perceptual_hash: "ffffffffffffffff",
+    },
+    {
+      ...inventoryRecord({ datasetSplit: "train", index: 1, label: 1 }),
+      exact_sha256: "4".repeat(64),
+      perceptual_hash: "fffffffffffffffe",
+    },
+  ];
+  const manifest = buildTrack5Manifest(inventory, {
+    artifactSchemaVersion: "artifact-v1",
+    corruptionSeed: 23,
+    datasetRevision: "saberzl/SID_Set@dc03ead",
+    perceptualDistance: 0,
+    preprocessingVersion: "shared-preprocessing-v1",
+    splitPlan: [
+      { split: "expert-training", datasetSplit: "train", perClass: 1 },
+      { split: "fusion-training", datasetSplit: "train", perClass: 1 },
+    ],
+    splitSeed: 17,
+    transformImplementationVersion: "track5-corruption-v1+sharp-0.35.4",
+  });
+
+  assert.equal(manifest.leakage_audit.perceptual_distance_threshold, 0);
+  assert.equal(manifest.leakage_audit.status, "passed");
 });
 
 test("every selected source receives the complete deterministic Track 5 condition matrix", () => {
@@ -248,8 +496,14 @@ test("versioned Track 5 manifest captures selection, runtime, provenance, and au
 
   assert.deepEqual(manifest, repeated);
   assert.equal(manifest.manifest_schema_version, "track5-manifest-v1");
+  assert.equal(manifest.selection_contract_version, "track5-source-selection-v2");
   assert.equal(manifest.selection.source_count, 2);
   assert.equal(manifest.selection.partition_unit, "source-image");
+  assert.deepEqual(manifest.selection.collision_backfill, {
+    exact_match_excluded: true,
+    perceptual_distance_threshold: 0,
+    upstream_split_priority: ["validation", "train"],
+  });
   assert.deepEqual(manifest.selection.split_counts, {
     "expert-training:class-0": 1,
     "expert-training:class-1": 1,

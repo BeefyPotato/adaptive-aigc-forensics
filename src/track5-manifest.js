@@ -16,6 +16,7 @@ import { deterministicHexRank } from "./deterministic-random.js";
 import {
   assertLeakageAuditPassed,
   auditTrack5Sources,
+  createPartitionLeakageGuard,
   ORGANIZER_DEMONSTRATION_POLICY,
 } from "./leakage-audit.js";
 import { validateSourceInventoryRecord } from "./source-inventory-contract.js";
@@ -30,6 +31,101 @@ export const TRACK5_SPLIT_PLAN = Object.freeze([
   Object.freeze({ split: "internal-validation", datasetSplit: "validation", perClass: 1_000 }),
   Object.freeze({ split: "sealed-internal-test", datasetSplit: "validation", perClass: 1_000 }),
 ]);
+
+export function selectTrack5CandidateInventoryRecords(
+  inventory,
+  { reservePerClass = 150, splitPlan = TRACK5_SPLIT_PLAN, splitSeed },
+) {
+  if (!Array.isArray(inventory)) {
+    throw new ContractError("SID_Set candidate inventory must be an array.");
+  }
+  requireNonnegativeInteger(splitSeed, "splitSeed", "Track 5 candidate options");
+  requireNonnegativeInteger(
+    reservePerClass,
+    "reservePerClass",
+    "Track 5 candidate options",
+  );
+  if (!Array.isArray(splitPlan) || splitPlan.length === 0) {
+    throw new ContractError("Track 5 split plan must be a non-empty array.");
+  }
+
+  const eligible = inventory.filter((record, index) => {
+    validateSourceInventoryRecord(record, index);
+    return record.label === 0 || record.label === 1;
+  });
+  const validationSourceIds = new Set(
+    eligible
+      .filter(({ dataset_split: datasetSplit }) => datasetSplit === "validation")
+      .map(({ img_id: imageId }) => `sid-set:${imageId}`),
+  );
+  const retained = eligible.filter(
+    ({ dataset_split: datasetSplit, img_id: imageId }) =>
+      datasetSplit !== "train" || !validationSourceIds.has(`sid-set:${imageId}`),
+  );
+  const seenSourceIds = new Set();
+  for (const { img_id: imageId } of retained) {
+    const sourceId = `sid-set:${imageId}`;
+    if (seenSourceIds.has(sourceId)) {
+      throw new ContractError(`SID_Set inventory repeats source identity ${sourceId}.`);
+    }
+    seenSourceIds.add(sourceId);
+  }
+
+  const requiredPerClass = new Map();
+  for (const allocation of splitPlan) {
+    requireNonemptyString(allocation.split, "split", "Track 5 split allocation");
+    if (allocation.datasetSplit !== "train" && allocation.datasetSplit !== "validation") {
+      throw new ContractError("Track 5 split allocation.datasetSplit must be train or validation.");
+    }
+    requireNonnegativeInteger(allocation.perClass, "perClass", "Track 5 split allocation");
+    requiredPerClass.set(
+      allocation.datasetSplit,
+      (requiredPerClass.get(allocation.datasetSplit) ?? 0) + allocation.perClass,
+    );
+  }
+
+  const buckets = new Map();
+  for (const datasetSplit of requiredPerClass.keys()) {
+    for (const label of [0, 1]) buckets.set(`${datasetSplit}:${label}`, []);
+  }
+  for (const record of retained) {
+    const key = `${record.dataset_split}:${record.label}`;
+    if (!buckets.has(key)) continue;
+    const sourceId = `sid-set:${record.img_id}`;
+    buckets.get(key).push({
+      rank: deterministicHexRank(splitSeed, sourceId),
+      record,
+      sourceId,
+    });
+  }
+
+  const selected = [];
+  for (const datasetSplit of ["train", "validation"]) {
+    const required = requiredPerClass.get(datasetSplit);
+    if (required === undefined) continue;
+    for (const label of [0, 1]) {
+      const candidates = buckets.get(`${datasetSplit}:${label}`).toSorted(
+        (left, right) =>
+          compareText(left.rank, right.rank) || compareText(left.sourceId, right.sourceId),
+      );
+      const candidateCount = required + reservePerClass;
+      if (candidates.length < candidateCount) {
+        throw new ContractError(
+          `SID_Set inventory has ${candidates.length} eligible ${datasetSplit} class-${label} sources; ${candidateCount} candidates are required including reserve.`,
+        );
+      }
+      for (const { record } of candidates.slice(0, candidateCount)) {
+        selected.push(
+          Object.freeze({
+            ...record,
+            provenance: Object.freeze({ ...record.provenance }),
+          }),
+        );
+      }
+    }
+  }
+  return Object.freeze(selected);
+}
 
 function normalizeInventoryRecord(record, index, datasetRevision) {
   const contractName = validateSourceInventoryRecord(record, index);
@@ -69,7 +165,12 @@ function normalizeInventoryRecord(record, index, datasetRevision) {
 
 export function selectTrack5Sources(
   inventory,
-  { datasetRevision, splitSeed, splitPlan = TRACK5_SPLIT_PLAN },
+  {
+    datasetRevision,
+    perceptualDistance = 4,
+    splitSeed,
+    splitPlan = TRACK5_SPLIT_PLAN,
+  },
 ) {
   if (!Array.isArray(inventory)) {
     throw new ContractError("SID_Set inventory must be an array.");
@@ -115,9 +216,10 @@ export function selectTrack5Sources(
     );
   }
 
+  const leakageGuard = createPartitionLeakageGuard(perceptualDistance);
   const offsets = new Map();
-  const selected = [];
-  for (const allocation of splitPlan) {
+  const requirements = new Map();
+  const allocations = splitPlan.map((allocation, planIndex) => {
     requireNonemptyString(allocation.split, "split", "Track 5 split allocation");
     if (allocation.datasetSplit !== "train" && allocation.datasetSplit !== "validation") {
       throw new ContractError("Track 5 split allocation.datasetSplit must be train or validation.");
@@ -127,23 +229,41 @@ export function selectTrack5Sources(
       "perClass",
       "Track 5 split allocation",
     );
+    return { allocation, planIndex };
+  });
+  const selectionOrder = allocations.toSorted(
+    (left, right) =>
+      (left.allocation.datasetSplit === "validation" ? 0 : 1) -
+        (right.allocation.datasetSplit === "validation" ? 0 : 1) ||
+      left.planIndex - right.planIndex,
+  );
+  const selectedByAllocation = splitPlan.map(() => []);
+  for (const { allocation, planIndex } of selectionOrder) {
     for (const label of [0, 1]) {
       const key = `${allocation.datasetSplit}:${label}`;
-      const start = offsets.get(key) ?? 0;
-      const end = start + allocation.perClass;
+      let offset = offsets.get(key) ?? 0;
+      const previouslyRequired = requirements.get(key) ?? 0;
+      const requiredThroughSplit = previouslyRequired + allocation.perClass;
+      requirements.set(key, requiredThroughSplit);
       const available = buckets.get(key);
-      if (available.length < end) {
+      let selectedForAllocation = 0;
+      while (offset < available.length && selectedForAllocation < allocation.perClass) {
+        const source = Object.freeze({ ...available[offset], split: allocation.split });
+        offset += 1;
+        if (leakageGuard.conflicts(source)) continue;
+        selectedByAllocation[planIndex].push(source);
+        leakageGuard.add(source);
+        selectedForAllocation += 1;
+      }
+      if (selectedForAllocation < allocation.perClass) {
         throw new ContractError(
-          `SID_Set inventory has ${available.length} eligible ${allocation.datasetSplit} class-${label} sources; ${end} are required through ${allocation.split}.`,
+          `SID_Set inventory has ${available.length} eligible ${allocation.datasetSplit} class-${label} sources; ${requiredThroughSplit} collision-free sources are required through ${allocation.split}, but ${previouslyRequired + selectedForAllocation} were found.`,
         );
       }
-      for (const source of available.slice(start, end)) {
-        selected.push(Object.freeze({ ...source, split: allocation.split }));
-      }
-      offsets.set(key, end);
+      offsets.set(key, offset);
     }
   }
-  return Object.freeze(selected);
+  return Object.freeze(selectedByAllocation.flat());
 }
 
 function observationSeed(rootSeed, sourceId, family, severity) {
@@ -251,6 +371,7 @@ export function buildTrack5Manifest(
 ) {
   const sources = selectTrack5Sources(inventory, {
     datasetRevision,
+    perceptualDistance,
     splitSeed,
     splitPlan,
   });
@@ -270,7 +391,7 @@ export function buildTrack5Manifest(
     manifest_schema_version: "track5-manifest-v1",
     source_contract_version: "track5-source-v1",
     observation_contract_version: "track5-observation-v1",
-    selection_contract_version: "track5-source-selection-v1",
+    selection_contract_version: "track5-source-selection-v2",
     condition_matrix_version: "track5-condition-matrix-v1",
     sampler_contract_version: "track5-balanced-sampler-v1",
     dataset: Object.freeze({ name: "SID_Set", revision: datasetRevision }),
@@ -281,6 +402,11 @@ export function buildTrack5Manifest(
       split_counts: splitCounts(sources),
       tampered_label_excluded: true,
       partition_unit: "source-image",
+      collision_backfill: Object.freeze({
+        exact_match_excluded: true,
+        perceptual_distance_threshold: perceptualDistance,
+        upstream_split_priority: Object.freeze(["validation", "train"]),
+      }),
     }),
     corruption: Object.freeze({
       root_seed: corruptionSeed,

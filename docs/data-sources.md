@@ -6,7 +6,7 @@ This page records the dataset locations listed for Track 5 in the hackathon brie
 
 | Dataset | Access location | Planned role |
 | --- | --- | --- |
-| SID_Set | [Hugging Face: saberzl/SID_Set](https://huggingface.co/datasets/saberzl/SID_Set) | Primary controlled development dataset. Pin the exact host revision, use the agreed 14,000-source cap, preserve labels `0` (real) and `1` (fully synthetic), and exclude label `2` (tampered). The dataset card declares CC BY 4.0; each manifest source still records its own provenance and license. |
+| SID_Set | [Hugging Face: saberzl/SID_Set](https://huggingface.co/datasets/saberzl/SID_Set) | Primary controlled development dataset. The tracked content-addressed candidate contract identifies 14,600 files from revision `dc03ead57929879319ce30a82bfcfb8d317b10bd` so duplicate-safe selection can retain the agreed 14,000-source production cap. Preserve labels `0` (real) and `1` (fully synthetic), and exclude label `2` (tampered). The dataset card declares CC BY 4.0; each manifest source still records its own provenance and license. |
 | CIFAKE | [Kaggle: CIFAKE - Real and AI-Generated Synthetic Images](https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images) | Small compatibility and pipeline smoke check; not part of the critical training path. |
 | WildFake | [ModelScope: WildFake](https://modelscope.cn/datasets/hy2628982280/WildFake/summary) | Optional cross-dataset evaluation if time permits; not required for the primary submission result. |
 
@@ -28,7 +28,7 @@ This set is evaluation-only: do not use it for training, calibration, model sele
 - Split at the source-image level before generating any corruption variants.
 - Keep every clean and transformed observation from one source in the same partition.
 - Run exact and perceptual duplicate checks across partitions and against the organizer demonstration set when it becomes available.
-- Preserve the original archives or immutable host revision and verify them before preparing the experiment manifest.
+- Preserve the original archives or a local mirror, and verify every selected file against the tracked revision, identity, byte length, and SHA-256 contract before preparing the experiment manifest.
 - Keep local dataset roots configurable; never encode a teammate's absolute filesystem path in code or committed configuration.
 
 The executable inventory and manifest procedure is documented in [track5-manifest.md](track5-manifest.md).

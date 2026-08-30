@@ -60,7 +60,7 @@ test("production split defaults refuse an incomplete source inventory", async ()
           outputDirectory: temporaryRoot,
           perceptualDistance: 0,
         }),
-      /required through expert-training/i,
+      /required through internal-validation/i,
     );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });

@@ -75,6 +75,42 @@ class PerceptualHashIndex {
   }
 }
 
+export function createPartitionLeakageGuard(perceptualDistance = 4) {
+  requireNonnegativeInteger(
+    perceptualDistance,
+    "perceptualDistance",
+    "Track 5 partition leakage guard options",
+  );
+  if (perceptualDistance > 64) {
+    throw new ContractError(
+      "Track 5 partition leakage guard perceptualDistance cannot exceed 64.",
+    );
+  }
+  const exactByHash = new Map();
+  const perceptualIndex = new PerceptualHashIndex();
+
+  return Object.freeze({
+    add(source) {
+      const exactBucket = exactByHash.get(source.exact_sha256) ?? [];
+      exactBucket.push(source);
+      exactByHash.set(source.exact_sha256, exactBucket);
+      perceptualIndex.add(source);
+    },
+    conflicts(source) {
+      if (
+        (exactByHash.get(source.exact_sha256) ?? []).some(
+          (previous) => previous.split !== source.split,
+        )
+      ) {
+        return true;
+      }
+      return perceptualIndex
+        .search(source.perceptual_hash, perceptualDistance)
+        .some(({ source: previous }) => previous.split !== source.split);
+    },
+  });
+}
+
 function normalizeSources(sources) {
   if (!Array.isArray(sources) || sources.length === 0) {
     throw new ContractError("Track 5 leakage audit requires a non-empty source array.");
