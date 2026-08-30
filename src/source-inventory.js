@@ -47,6 +47,29 @@ function perceptualDifferenceHash(pixels, { channels, width, height }) {
   return bits.toString(16).padStart(16, "0");
 }
 
+export async function forEachWithConcurrency(values, concurrency, operation) {
+  if (!Array.isArray(values)) {
+    throw new ContractError("Concurrent worker values must be an array.");
+  }
+  if (!Number.isSafeInteger(concurrency) || concurrency <= 0) {
+    throw new ContractError("Concurrent worker limit must be a positive safe integer.");
+  }
+  if (typeof operation !== "function") {
+    throw new ContractError("Concurrent worker operation must be a function.");
+  }
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await operation(values[index], index);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, () => worker()),
+  );
+}
+
 async function inspectRecord(record, index, datasetRoot) {
   const contractName = validateSourceInventoryRecord(record, index);
   const { resolvedImage, relativeImage } = resolveImagePath(
@@ -108,17 +131,9 @@ export async function inspectSourceInventory(
     throw new ContractError("Source inventory options.concurrency must be a positive safe integer.");
   }
   const inspected = new Array(records.length);
-  let nextIndex = 0;
-  async function worker() {
-    while (nextIndex < records.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      inspected[index] = await inspectRecord(records[index], index, datasetRoot);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, records.length) }, () => worker()),
-  );
+  await forEachWithConcurrency(records, concurrency, async (record, index) => {
+    inspected[index] = await inspectRecord(record, index, datasetRoot);
+  });
   return Object.freeze(inspected);
 }
 

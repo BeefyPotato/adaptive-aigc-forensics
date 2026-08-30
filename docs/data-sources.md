@@ -6,7 +6,7 @@ This page records the dataset locations listed for Track 5 in the hackathon brie
 
 | Dataset | Access location | Planned role |
 | --- | --- | --- |
-| SID_Set | [Hugging Face: saberzl/SID_Set](https://huggingface.co/datasets/saberzl/SID_Set) | Primary controlled development dataset. Pin the exact host revision, use the agreed 14,000-source cap, preserve labels `0` (real) and `1` (fully synthetic), and exclude label `2` (tampered). The dataset card declares CC BY 4.0; each manifest source still records its own provenance and license. |
+| SID_Set | [Hugging Face: saberzl/SID_Set](https://huggingface.co/datasets/saberzl/SID_Set) | Primary controlled development dataset. The tracked downloader pins the host revision and prepares 14,600 local candidates so duplicate-safe selection can retain the agreed 14,000-source production cap. Preserve labels `0` (real) and `1` (fully synthetic), and exclude label `2` (tampered). The dataset card declares CC BY 4.0; each manifest source still records its own provenance and license. |
 | CIFAKE | [Kaggle: CIFAKE - Real and AI-Generated Synthetic Images](https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images) | Small compatibility and pipeline smoke check; not part of the critical training path. |
 | WildFake | [ModelScope: WildFake](https://modelscope.cn/datasets/hy2628982280/WildFake/summary) | Optional cross-dataset evaluation if time permits; not required for the primary submission result. |
 

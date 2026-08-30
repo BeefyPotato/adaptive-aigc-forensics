@@ -1,6 +1,6 @@
 # Track 5 experiment manifest
 
-Issue #3 implements the reproducible Track 5 source-selection and corruption harness. It creates recipes and audit evidence; it does not download or commit SID_Set or the organizer demonstration images.
+Issue #3 implements the reproducible Track 5 source-selection and corruption harness. It includes a pinned SID_Set candidate downloader, but downloaded images, metadata caches, inventories, and generated artifacts remain local and are not committed.
 
 ## Install and controlled fixture
 
@@ -32,16 +32,25 @@ The inspector decodes every image, records its orientation-corrected dimensions,
 
 ## Production command and allocation
 
-Prepare the authorized local image tree and inventory, then run:
+Download the pinned candidate pool from the repository root:
+
+```shell
+node ./scripts/download-sid-set-candidates.mjs
+```
+
+The downloader verifies SID_Set revision `dc03ead57929879319ce30a82bfcfb8d317b10bd`, scans the complete train and validation metadata, lets validation retain any stable identity duplicated in training, and ranks identities with split seed `17`. It downloads 150 reserve candidates per upstream split and class, producing 14,600 local candidates and `datasets/sid-set/inventory.jsonl`. Existing non-empty files and cached metadata pages are reused. The reserve is necessary because hashes can only be calculated after download and decode; the command fails rather than relaxing leakage rules if a future audit exhausts it.
+
+Then run:
 
 ```shell
 node ./src/track5-cli.js build-manifest \
   --inventory ./datasets/sid-set/inventory.jsonl \
   --dataset-root ./datasets/sid-set/images \
-  --dataset-revision '<immutable-SID_Set-revision>' \
-  --organizer-hashes ./datasets/organizer-demonstration-hashes.json \
+  --dataset-revision 'saberzl/SID_Set@dc03ead57929879319ce30a82bfcfb8d317b10bd' \
   --output-dir ./artifacts/track5-production
 ```
+
+Until the organizer archive is available, the audit records its organizer check as `not-available`. Once the official archive has been hashed, add `--organizer-hashes ./datasets/organizer-demonstration-hashes.json`; overlap then becomes a hard failure.
 
 The production defaults use split seed `17`, corruption seed `23`, a perceptual distance threshold of `4`, and exactly this source-level allocation:
 
@@ -52,7 +61,7 @@ The production defaults use split seed `17`, corruption seed `23`, a perceptual 
 | Internal validation | validation | 1,000 | 1,000 | 2,000 |
 | Sealed internal test | validation | 1,000 | 1,000 | 2,000 |
 
-Selection hashes the split seed and stable source identity, so inventory input order does not affect the result. Sources are partitioned before corruption recipes are created. Every clean and corrupted observation from a source therefore inherits one partition. Insufficient class counts, repeated identities, missing provenance, invalid paths, tampered labels in the selected population, or a failed leakage audit stop the command before artifacts are written.
+Selection hashes the split seed and stable source identity, so inventory input order does not affect the result. The selector protects validation and sealed-test candidates before assigning training candidates. It skips exact duplicates and perceptual matches within distance `4` whenever the match belongs to another project partition, then deterministically backfills from the reserve while preserving every split/class quota. This behavior is recorded as `track5-source-selection-v2` in the manifest. Sources are partitioned before corruption recipes are created, so every clean and corrupted observation from a source inherits one partition. Insufficient collision-free candidates, repeated identities, missing provenance, invalid paths, tampered labels in the selected population, or a failed leakage audit stop the command before artifacts are written.
 
 `track5-manifest.json` contains 14,000 source records and, for a complete production inventory, 280,000 observation records. Each observation links its source and records its binary label, partition, family, severity, deterministic seed, corruption parameters, transform implementation version, and restored dimensions. `track5-leakage-audit.json` is also written separately.
 
