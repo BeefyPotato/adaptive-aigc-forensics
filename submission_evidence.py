@@ -115,7 +115,7 @@ def _representative_case(row, *, score_field, threshold_logit):
 
 
 def build_from_rows(rows, *, candidate="learned-static-fusion", threshold_logit=0.0):
-    """Select one deterministic, source-unique sanitized error per required stratum."""
+    """Allocate deterministic, globally source-unique sanitized error representatives."""
     if candidate not in CANDIDATE_SCORE_FIELDS:
         raise ValueError("Submission candidate must be raw-rgb-only or learned-static-fusion.")
     if isinstance(threshold_logit, bool) or not isinstance(threshold_logit, (int, float)) or not math.isfinite(threshold_logit):
@@ -133,14 +133,21 @@ def build_from_rows(rows, *, candidate="learned-static-fusion", threshold_logit=
         key = (stratum, case["source_id"])
         if key not in by_source or case["rank"] < by_source[key]["rank"]:
             by_source[key] = case
-    return {
-        stratum: min(
+    selected_sources = set()
+    representatives = {}
+    for stratum in ERROR_STRATA:
+        candidates = sorted(
             (case for (case_stratum, _), case in by_source.items() if case_stratum == stratum),
             key=lambda case: case["rank"],
-            default=None,
         )
-        for stratum in ERROR_STRATA
-    }
+        representative = next(
+            (case for case in candidates if case["source_id"] not in selected_sources),
+            None,
+        )
+        representatives[stratum] = representative
+        if representative is not None:
+            selected_sources.add(representative["source_id"])
+    return representatives
 
 
 def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, rows):

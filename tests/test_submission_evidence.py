@@ -167,6 +167,39 @@ class SubmissionEvidenceTests(unittest.TestCase):
             )
 
     @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_representative_cases_are_globally_source_unique_and_order_independent(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        generation = completed_generation_fixture()
+        rows = [dict(row) for row in generation["calibrated_internal_validation_cache"]["records"]]
+        rows[2]["source_id"] = "source-1"
+        rows.append(
+            dict(rows[2], source_id="source-5", variant_id="noise-fp-backup")
+        )
+        generation["calibrated_internal_validation_cache"]["records"] = rows
+        reader.return_value = generation
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        reader.return_value = {
+            **generation,
+            "calibrated_internal_validation_cache": {"records": list(reversed(rows))},
+        }
+        reversed_evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        cases = evidence["error_analysis"]["representative_cases"]
+        selected = [case for case in cases.values() if case is not None]
+        self.assertEqual(len({case["source_id"] for case in selected}), len(selected))
+        self.assertEqual(cases, reversed_evidence["error_analysis"]["representative_cases"])
+
+    @patch("submission_evidence.read_static_fallback_generation")
     def test_evidence_persists_internal_validation_limitations(self, reader):
         from submission_evidence import build_submission_evidence
 
