@@ -1,4 +1,8 @@
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+import json
+import os
 from unittest.mock import patch
 import tempfile
 import hashlib
@@ -85,6 +89,31 @@ def completed_generation_fixture():
 
 
 class SubmissionEvidenceTests(unittest.TestCase):
+    @patch("submission_evidence.publish_submission_evidence")
+    def test_evidence_cli_publishes_and_rejects_missing_arguments(self, publisher):
+        import submission_evidence
+
+        publisher.return_value = {"system_id": "raw-rgb-only"}
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(
+                submission_evidence.main([
+                    "--generation-dir", "..\\frozen-generation", "--candidate", "raw-rgb-only",
+                    "--expected-generation-revision", TRUSTED_GENERATION_REVISION,
+                    "--expected-bundle-sha256", TRUSTED_BUNDLE_SHA256, "--output-dir", "evidence-output",
+                ]),
+                0,
+            )
+        publisher.assert_called_once_with(
+            Path(os.path.abspath("..\\frozen-generation")), candidate="raw-rgb-only",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256, output_directory=Path("evidence-output"),
+        )
+        self.assertEqual(json.loads(output.getvalue())["system_id"], "raw-rgb-only")
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            submission_evidence.main([])
+        self.assertNotEqual(error.exception.code, 0)
+
     @patch("submission_evidence.read_static_fallback_generation")
     def test_evidence_binds_generation_bundle_and_candidate(self, reader):
         from submission_evidence import build_submission_evidence

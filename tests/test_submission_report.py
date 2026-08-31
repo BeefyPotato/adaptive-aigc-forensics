@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ElementTree
@@ -61,22 +63,22 @@ def evidence_fixture() -> dict:
             "selection_rule": "submission-error-hash-rank-v1",
             "representative_cases": {
                 "clean-false-positive": {
-                    "source_id": "source-clean-fp", "variant_id": "clean-fp", "condition_family": "clean",
+                    "source_id": "sid-set:source_clean_fp", "variant_id": "variant-v1-" + "1" * 64, "condition_family": "clean",
                     "severity": "clean", "error_kind": "false-positive", "expert_agreement": "agree",
                     "correction_status": "both-experts-wrong", "rank": "1" * 64,
                 },
                 "clean-false-negative": {
-                    "source_id": "source-clean-fn", "variant_id": "clean-fn", "condition_family": "clean",
+                    "source_id": "sid-set:source_clean_fn", "variant_id": "variant-v1-" + "2" * 64, "condition_family": "clean",
                     "severity": "clean", "error_kind": "false-negative", "expert_agreement": "disagree",
                     "correction_status": "signal-corrects-rgb-error", "rank": "2" * 64,
                 },
                 "transformed-false-positive": {
-                    "source_id": "source-transformed-fp", "variant_id": "noise-fp", "condition_family": "noise",
+                    "source_id": "sid-set:source_transformed_fp", "variant_id": "variant-v1-" + "3" * 64, "condition_family": "noise",
                     "severity": "sigma-0.1", "error_kind": "false-positive", "expert_agreement": "agree",
                     "correction_status": "both-experts-wrong", "rank": "3" * 64,
                 },
                 "transformed-false-negative": {
-                    "source_id": "source-transformed-fn", "variant_id": "noise-fn", "condition_family": "noise",
+                    "source_id": "sid-set:source_transformed_fn", "variant_id": "variant-v1-" + "4" * 64, "condition_family": "noise",
                     "severity": "sigma-0.1", "error_kind": "false-negative", "expert_agreement": "disagree",
                     "correction_status": "rgb-corrects-signal-error", "rank": "4" * 64,
                 },
@@ -144,13 +146,45 @@ class SubmissionReportTests(unittest.TestCase):
         self.assertEqual(svg.getroot().tag.rsplit("}", 1)[-1], "svg")
         self.assertEqual(completion["system_id"], self.evidence["system_id"])
 
+    def test_report_accepts_trusted_namespaced_representative_identifiers(self):
+        from submission_report import render_submission_report
+
+        evidence = copy.deepcopy(self.evidence)
+        case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
+        case["source_id"] = "sid-set:full_synthetic_005849"
+        case["variant_id"] = "variant-v1-" + "a" * 64
+        self.reset_evidence(evidence)
+        render_submission_report(self.evidence_dir, self.output_dir)
+        markdown = (self.output_dir / "robustness-and-errors.md").read_text("utf-8")
+        self.assertIn("sid-set:full\\_synthetic\\_005849", markdown)
+
+    def test_svg_includes_persisted_summary_and_disclosure_annotations(self):
+        from submission_report import render_submission_report
+
+        render_submission_report(self.evidence_dir, self.output_dir)
+        svg = (self.output_dir / "clean-vs-transformed.svg").read_text("utf-8")
+        self.assertIn("Mean transformed AUROC: 0.796000", svg)
+        self.assertIn("Worst condition: noise / sigma-0.1", svg)
+        self.assertIn("Internal validation influenced candidate and threshold selection.", svg)
+
+    def test_report_cli_publishes_and_rejects_invalid_arguments(self):
+        command = [sys.executable, "submission_report.py", str(self.evidence_dir), str(self.output_dir)]
+        completed = subprocess.run(command, cwd=Path(__file__).parents[1], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue((self.output_dir / "submission-report.complete.json").is_file())
+        self.assertEqual(json.loads(completed.stdout)["system_id"], self.evidence["system_id"])
+
+        invalid = subprocess.run([sys.executable, "submission_report.py"], cwd=Path(__file__).parents[1], capture_output=True, text=True)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("usage:", invalid.stderr)
+
     def test_markdown_escapes_metacharacters_and_is_byte_deterministic(self):
         from submission_report import render_submission_report
 
         evidence = copy.deepcopy(self.evidence)
         case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
-        case["source_id"] = "source-safe"
-        case["variant_id"] = "variant-safe"
+        case["source_id"] = "sid-set:source_safe"
+        case["variant_id"] = "variant-v1-" + "5" * 64
         evidence["system_id"] = "system-<&>\"'`|[]*_"
         evidence["limitations"][0] = "limitation-<&>\"'`|[]*_"
         self.reset_evidence(evidence)

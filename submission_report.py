@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import ctypes
 import errno
@@ -128,11 +129,35 @@ def _markdown_text(value, context):
     return text
 
 
-def _opaque_identifier(value, context):
+def _safe_body(value):
+    return bool(value) and all(
+        "A" <= character <= "Z"
+        or "a" <= character <= "z"
+        or "0" <= character <= "9"
+        or character in "-_"
+        for character in value
+    )
+
+
+def _source_identifier(value, context):
     identifier = _single_line_text(value, context)
-    if any(not ("A" <= character <= "Z" or "a" <= character <= "z" or "0" <= character <= "9" or character in "-_") for character in identifier):
-        raise ValueError(f"{context} must be an opaque ASCII identifier.")
+    prefix = "sid-set:"
+    if not identifier.startswith(prefix) or not _safe_body(identifier[len(prefix):]):
+        raise ValueError(f"{context} must be a sid-set opaque ASCII identifier.")
     return identifier
+
+
+def _variant_identifier(value, context):
+    identifier = _single_line_text(value, context)
+    prefix = "variant-v1-"
+    digest = identifier.removeprefix(prefix)
+    if not identifier.startswith(prefix) or len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"{context} must be a variant-v1 SHA-256 identifier.")
+    return identifier
+
+
+def _svg_text(value, context):
+    return html.escape(_single_line_text(value, context), quote=True)
 
 
 def _read_completed_evidence(evidence_directory):
@@ -255,8 +280,8 @@ def _validated_errors(error_analysis):
             continue
         if not isinstance(case, dict) or set(case) != required_case:
             raise ValueError("Submission evidence representative case is incomplete or unexpected.")
-        _opaque_identifier(case["source_id"], "Submission evidence representative source ID")
-        _opaque_identifier(case["variant_id"], "Submission evidence representative variant ID")
+        _source_identifier(case["source_id"], "Submission evidence representative source ID")
+        _variant_identifier(case["variant_id"], "Submission evidence representative variant ID")
         if case["condition_family"] not in FAMILIES:
             raise ValueError("Submission evidence representative condition family is invalid.")
         _single_line_text(case["severity"], "Submission evidence representative severity")
@@ -324,22 +349,33 @@ def _markdown_report(data):
 
 def _svg(data):
     families = data["metrics"]["corruption_families"]
+    metrics = data["metrics"]
+    worst = metrics["worst_family_severity"]
     bars = []
     for index, family in enumerate(FAMILIES):
         value = _finite(families[family]["auroc"], f"{family} AUROC", unit_interval=True)
-        y = 35 + index * 32
+        y = 125 + index * 38
         bars.extend((
-            f'<text x="10" y="{y + 14}">{family}</text>',
-            f'<rect x="105" y="{y}" width="{value * 360:.3f}" height="20" fill="#2563eb"/>',
-            f'<text x="470" y="{y + 14}">{value:.6f}</text>',
+            f'<text x="160" y="{y + 18}" text-anchor="end" font-family="sans-serif" font-size="14">{family}</text>',
+            f'<rect x="170" y="{y}" width="{value * 600:.3f}" height="24" fill="#2563eb"/>',
+            f'<text x="780" y="{y + 18}" font-family="sans-serif" font-size="13">{value:.6f}</text>',
         ))
-    return ("\n".join((
-        '<svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 560 280">',
+    annotations = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img">',
         '<title>Clean versus transformed AUROC</title>',
-        '<text x="10" y="20">Clean versus transformed AUROC</text>',
+        '<desc>Persisted internal-validation robustness values and limitations.</desc>',
+        '<rect width="960" height="560" fill="#fff"/>',
+        '<text x="20" y="30" font-family="sans-serif" font-size="20" font-weight="bold">Clean versus transformed AUROC</text>',
+        f'<text x="20" y="58" font-family="sans-serif" font-size="14">Mean transformed AUROC: {_metric(metrics["mean_corrupted_auroc"], "Mean transformed AUROC")}</text>',
+        f'<text x="20" y="82" font-family="sans-serif" font-size="14">Worst condition: {_svg_text(worst["family"], "Submission evidence worst condition family")} / {_svg_text(worst["severity"], "Submission evidence worst condition severity")} (AUROC {_metric(worst["auroc"], "Worst-condition AUROC")})</text>',
+        '<line x1="170" y1="410" x2="770" y2="410" stroke="#243746"/>',
         *bars,
+        '<text x="20" y="438" font-family="sans-serif" font-size="14" font-weight="bold">Limitations</text>',
+        *(f'<text x="20" y="{462 + index * 22}" font-family="sans-serif" font-size="11">{_svg_text(limitation, "Submission evidence limitation")}</text>' for index, limitation in enumerate(data["limitations"])),
         '</svg>',
-    )) + "\n").encode("utf-8")
+    ]
+    return ("\n".join(annotations) + "\n").encode("utf-8")
 
 
 def _atomic_write(path, contents):
@@ -470,3 +506,20 @@ def render_submission_report(evidence_directory, output_directory):
     }
     completion = _report_completion(evidence_bytes, evidence_completion, data["system_id"], files)
     return _publish(output_directory, files, completion)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("evidence_directory", type=Path)
+    parser.add_argument("output_directory", type=Path)
+    arguments = parser.parse_args(argv)
+    try:
+        completion = render_submission_report(arguments.evidence_directory, arguments.output_directory)
+    except ValueError as error:
+        parser.error(str(error))
+    print(json.dumps(completion, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

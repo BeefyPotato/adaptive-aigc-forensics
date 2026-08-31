@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import ctypes
 import errno
@@ -433,3 +434,30 @@ def publish_submission_evidence(
     )
     evidence_bytes = _artifact_bytes(evidence)
     return _publish_directory(output_directory, evidence_bytes, _completion(evidence, evidence_bytes))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--generation-dir", required=True, type=Path)
+    parser.add_argument("--candidate", required=True, choices=sorted(CANDIDATE_SCORE_FIELDS))
+    parser.add_argument("--expected-generation-revision", required=True)
+    parser.add_argument("--expected-bundle-sha256", required=True)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    arguments = parser.parse_args(argv)
+    generation_directory = Path(os.path.abspath(arguments.generation_dir))
+    try:
+        completion = publish_submission_evidence(
+            generation_directory,
+            candidate=arguments.candidate,
+            expected_generation_revision=arguments.expected_generation_revision,
+            expected_bundle_sha256=arguments.expected_bundle_sha256,
+            output_directory=arguments.output_dir,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    print(json.dumps(completion, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
