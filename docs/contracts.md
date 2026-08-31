@@ -61,6 +61,8 @@ Prediction output is a JSON array sorted by stable relative path. Each record co
 
 `image_path` must be non-empty and unique. `pred` is the finite `[0, 1]` likelihood that the image is AI-generated. Labels, logits, thresholds, errors, and provenance belong in separate artifacts and must not be added to submission records.
 
+Directory submission inference uses POSIX-style paths relative to the declared input root and includes every supported image exactly once. Unsupported extensions are ignored; corrupt supported images, redirected paths, incompatible frozen artifacts, missing required experts, wrong result counts, and non-finite values fail the whole run before atomic publication. Empty input is a valid empty array. The Issue #7 learned-static policy requires both experts and applies sigmoid to `0.677 * calibrated_rgb_logit + 0.323 * calibrated_signal_logit`; it does not use the evaluation threshold or the unpromoted degradation gate.
+
 ## Fixture outputs
 
 `metric-v1` stores deterministic per-variant prediction records plus fixture accuracy and Brier score. These values prove that evaluation consumed the same predictions written through the submission contract; they are smoke metrics and are not robustness claims.
