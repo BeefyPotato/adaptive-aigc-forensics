@@ -32,6 +32,32 @@ class SubmissionInferenceTests(unittest.TestCase):
         self.assertNotAlmostEqual(actual, 0.9611038172365696, places=12)  # RGB only
         self.assertNotAlmostEqual(actual, 0.7421356326475331, places=12)  # 50/50
 
+    def test_frozen_policy_accepts_real_bundle_float_representation(self):
+        bundle = {
+            "selected_fallback_type": "learned-static-fusion",
+            "rgb_calibrator": {"slope": 0.481469358380229, "intercept": 2.725716958843671},
+            "signal_calibrator": {"slope": 2.1908644107462774, "intercept": 0.002442450220552084},
+            "static_weight": {
+                "rgb_weight": 0.677,
+                "signal_weight": 0.32299999999999995,
+            },
+        }
+
+        actual = subject.frozen_probability(1.0, -0.5, bundle, validate_calibrators=False)
+
+        self.assertAlmostEqual(actual, 0.8603535389227722, places=15)
+
+    def test_frozen_policy_rejects_meaningful_weight_drift(self):
+        bundle = {
+            "selected_fallback_type": "learned-static-fusion",
+            "rgb_calibrator": {"slope": 1.0, "intercept": 0.0},
+            "signal_calibrator": {"slope": 1.0, "intercept": 0.0},
+            "static_weight": {"rgb_weight": 0.677, "signal_weight": 0.323000000001},
+        }
+
+        with self.assertRaisesRegex(ValueError, "weights"):
+            subject.frozen_probability(0.0, 0.0, bundle, validate_calibrators=False)
+
     def test_device_selection_never_silently_falls_back(self):
         self.assertEqual(subject.resolve_device("cpu", cuda_available=True), "cpu")
         self.assertEqual(subject.resolve_device("auto", cuda_available=False), "cpu")
@@ -62,6 +88,29 @@ class SubmissionInferenceTests(unittest.TestCase):
             rows = json.loads(first)
             self.assertEqual([row["image_path"] for row in rows], ["nested/a.jpg", "z.PNG"])
             self.assertTrue(all(set(row) == {"image_path", "pred"} for row in rows))
+
+    def test_directory_inference_uses_production_signal_pixel_scale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (16, 16), (128, 64, 32)).save(root / "a.jpg")
+            output = root.parent / (root.name + "-scaled.json")
+            bundle = {
+                "selected_fallback_type": "learned-static-fusion",
+                "rgb_calibrator": {"slope": 1.0, "intercept": 0.0},
+                "signal_calibrator": {"slope": 1.0, "intercept": 0.0},
+                "static_weight": {"rgb_weight": 0.677, "signal_weight": 0.323},
+            }
+
+            with patch.object(subject, "load_frozen_bundle", return_value=bundle):
+                rows = subject.run_submission(
+                    root,
+                    root,
+                    output,
+                    ConstantBackend([0.0]),
+                    ConstantBackend([0.0]),
+                )
+
+            self.assertEqual(rows, [{"image_path": "a.jpg", "pred": 0.5}])
 
     def test_backend_failure_preserves_existing_output(self):
         with tempfile.TemporaryDirectory() as directory:

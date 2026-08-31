@@ -13,8 +13,7 @@ import numpy as np
 from fusion_pipeline import calibrated_logit, read_static_fallback_generation
 from rgb_expert import discover_images, preprocess_image
 from safe_output import atomic_write_bytes
-from shared_observation import prepare_shared_expert_rgb
-from signal_expert import extract_signal_representation
+from signal_expert import decode_expert_rgb, extract_signal_representation
 
 
 GENERATION_REVISION = "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
@@ -22,6 +21,7 @@ BUNDLE_REVISION = "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803
 BUNDLE_SHA256 = "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2"
 RGB_WEIGHT = 0.677
 SIGNAL_WEIGHT = 0.323
+WEIGHT_ABSOLUTE_TOLERANCE = 1e-15
 SUPPORTED_DEVICES = {"auto", "cpu", "cuda"}
 
 
@@ -46,7 +46,20 @@ def frozen_probability(rgb_logit: float, signal_logit: float, bundle: dict, *, v
     if bundle.get("selected_fallback_type") != "learned-static-fusion":
         raise ValueError("Frozen submission policy must be learned-static-fusion.")
     weight = bundle.get("static_weight", {})
-    if weight.get("rgb_weight") != RGB_WEIGHT or weight.get("signal_weight") != SIGNAL_WEIGHT:
+    observed_weights = (weight.get("rgb_weight"), weight.get("signal_weight"))
+    expected_weights = (RGB_WEIGHT, SIGNAL_WEIGHT)
+    if any(
+        isinstance(observed, bool)
+        or not isinstance(observed, (int, float))
+        or not math.isfinite(observed)
+        or not math.isclose(
+            observed,
+            expected,
+            rel_tol=0.0,
+            abs_tol=WEIGHT_ABSOLUTE_TOLERANCE,
+        )
+        for observed, expected in zip(observed_weights, expected_weights, strict=True)
+    ):
         raise ValueError("Frozen submission weights are stale or incompatible.")
     apply = calibrated_logit if validate_calibrators else _light_calibrated_logit
     rgb = apply(rgb_logit, bundle.get("rgb_calibrator", {}))
@@ -77,7 +90,7 @@ def _preprocess_rgb(path: Path) -> np.ndarray:
 
 
 def _preprocess_signal(path: Path) -> np.ndarray:
-    rgb = prepare_shared_expert_rgb(path, resolution=384)
+    rgb = decode_expert_rgb(path, resolution=384)
     return extract_signal_representation(rgb)["features"]
 
 
