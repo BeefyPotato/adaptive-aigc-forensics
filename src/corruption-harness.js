@@ -6,7 +6,7 @@ import {
   requireNonnegativeInteger,
   requireObject,
 } from "./contract-validation.js";
-import { deterministicStandardNormal } from "./deterministic-random.js";
+import { applySeededRgbNoiseBytes } from "./seeded-rgb-noise.js";
 import { requireTrack5Condition } from "./track5-conditions.js";
 
 function rawSharp(observation) {
@@ -45,13 +45,15 @@ function validateObservation(observation) {
   }
 }
 
-export async function decodeSourceImage(path) {
+export async function decodeSourceImage(input, sourceDescription) {
+  const description =
+    sourceDescription ?? (Buffer.isBuffer(input) ? "verified source bytes" : input);
   try {
-    return await rawObservation(sharp(path, { failOn: "error" }).autoOrient(), {
+    return await rawObservation(sharp(input, { failOn: "error" }).autoOrient(), {
       operation: "decode",
     });
   } catch (error) {
-    throw new ContractError(`source image could not be decoded from ${path}: ${error.message}`);
+    throw new ContractError(`source image could not be decoded from ${description}: ${error.message}`);
   }
 }
 
@@ -200,12 +202,12 @@ async function applyResizeRoundTrip(observation, parameters) {
   );
 }
 
-function applySeededRgbNoise(observation, parameters, seed) {
-  const data = Buffer.allocUnsafe(observation.data.length);
-  for (let index = 0; index < observation.data.length; index += 1) {
-    const noise = deterministicStandardNormal(seed, index) * parameters.sigma * 255;
-    data[index] = Math.max(0, Math.min(255, Math.round(observation.data[index] + noise)));
-  }
+async function applySeededRgbNoise(observation, parameters, seed, executionOptions) {
+  const data = await applySeededRgbNoiseBytes(observation.data, {
+    seed,
+    sigma: parameters.sigma,
+    workerCount: executionOptions.noiseWorkerCount,
+  });
   return Object.freeze({
     data,
     width: observation.width,
@@ -281,8 +283,13 @@ const CORRUPTION_APPLICATORS = new Map([
   ["crop", applyCenterCropRoundTrip],
 ]);
 
-export async function applyCorruption(observation, corruptionVariant) {
+export async function applyCorruption(
+  observation,
+  corruptionVariant,
+  executionOptions = {},
+) {
   validateObservation(observation);
+  requireObject(executionOptions, "corruption execution options");
   requireObject(corruptionVariant, "corruption variant");
   requireFields(
     corruptionVariant,
@@ -295,6 +302,17 @@ export async function applyCorruption(observation, corruptionVariant) {
     "corruption_seed",
     "corruption variant",
   );
+  const noiseWorkerCount = executionOptions.noiseWorkerCount ?? 1;
+  requireNonnegativeInteger(
+    noiseWorkerCount,
+    "noiseWorkerCount",
+    "corruption execution options",
+  );
+  if (noiseWorkerCount === 0) {
+    throw new ContractError(
+      "corruption execution options.noiseWorkerCount must be positive.",
+    );
+  }
 
   requireTrack5Condition(
     corruptionVariant.condition_family,
@@ -310,5 +328,6 @@ export async function applyCorruption(observation, corruptionVariant) {
     observation,
     corruptionVariant.corruption_parameters,
     corruptionVariant.corruption_seed,
+    { noiseWorkerCount },
   );
 }

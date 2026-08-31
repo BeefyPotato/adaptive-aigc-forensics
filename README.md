@@ -50,8 +50,8 @@ The project uses the existing Community Forensics detector as a frozen RGB exper
 
 Issue #5 adds the reproducible robustness-baseline runner. It writes versioned logits for downstream fusion, internal-validation robustness metrics, runtime/GPU profiling, and a deterministic rerun check without exposing sealed-test labels. See [docs/rgb-baseline.md](docs/rgb-baseline.md).
 
-Production RGB and signal work must first resolve Issue #3 recipes with `scripts/materialize-track5-observations.mjs`. The resulting lossless, checksummed observation is the common pixel handoff; recipe-only manifests are rejected by the RGB baseline to prevent clean images from being reported as corruption results.
+The RGB baseline consumes a fully resolved Issue-3 materialized manifest. The signal runner accepts the finalized recipe manifest and resolves only its balanced training draw and complete internal-validation matrix in bounded, transient shards. Both routes use the same lossless, checksummed materialized observation as the common pixel handoff; neither expert may report a clean source image as a corruption result.
 
 ## Signal expert
 
-Issue #6 adds the deterministic 26-value signal representation, leakage-safe normalization, reproducible small MLP training, strict feature/logit caches, and corruption-family validation metrics. See [docs/signal-expert.md](docs/signal-expert.md).
+Issue #6 adds the deterministic 26-value signal representation, the Issue-3 balanced sampler, leakage-safe normalization and MLP training, strictly versioned feature/logit/checkpoint artifacts, and canonical severity-first robustness metrics. Its public `signal_cli.py run` seam takes the finalized Issue-3 manifest and local images all the way to a frozen signal-only checkpoint and internal-validation report without materializing the roughly 202 GiB selected experiment at once. See [docs/signal-expert.md](docs/signal-expert.md).

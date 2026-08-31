@@ -1,32 +1,90 @@
-"""CLI for deterministic signal feature extraction and training."""
+"""Command-line entry point for the leakage-safe signal-only experiment."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+from typing import Sequence
 
-from signal_expert import extract_signal_representation, fit_normalization, train_signal_mlp, write_model_bundle
+from signal_maps import render_signal_maps
+from signal_pipeline import resolve_signal_experiment_profile, run_signal_experiment
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--training-features", type=Path, required=True)
-    parser.add_argument("--validation-features", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seed", type=int, default=61)
-    parser.add_argument("--epochs", type=int, default=200)
-    arguments = parser.parse_args()
-    training = json.loads(arguments.training_features.read_text(encoding="utf-8"))
-    validation = json.loads(arguments.validation_features.read_text(encoding="utf-8"))
-    manifest_metadata = training["manifest_metadata"]
-    if validation["manifest_metadata"] != manifest_metadata:
-        raise ValueError("Training and validation feature manifests are incompatible.")
-    normalization = fit_normalization(training["records"], manifest_metadata=manifest_metadata)
-    model, metadata = train_signal_mlp(training["records"], validation["records"], normalization, manifest_metadata=manifest_metadata, seed=arguments.seed, epochs=arguments.epochs)
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    write_model_bundle(arguments.output, model, metadata, normalization)
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Materialize bounded canonical Issue-3 observation shards, extract the "
+            "26 signal features, train on expert-training, and evaluate on "
+            "internal-validation."
+        ),
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run", help="Run the complete manifest-to-artifacts experiment.")
+    run.add_argument("--manifest", type=Path, required=True)
+    run.add_argument("--dataset-root", type=Path, required=True)
+    run.add_argument("--output-dir", type=Path, required=True)
+    run.add_argument(
+        "--experiment-profile",
+        choices=("hackathon-v1", "issue-6-full-v1", "custom-v1"),
+        default="hackathon-v1",
+    )
+    run.add_argument("--training-count", type=int)
+    run.add_argument("--validation-source-count", type=int)
+    run.add_argument("--validation-seed", type=int, default=61)
+    run.add_argument("--sampler-seed", type=int, default=61)
+    run.add_argument("--model-seed", type=int, default=61)
+    run.add_argument("--epochs", type=int, default=200)
+    run.add_argument("--learning-rate", type=float, default=0.02)
+    run.add_argument("--resolution", type=int, choices=(224, 384), default=384)
+    run.add_argument("--shard-raw-bytes", type=int, default=2**30)
+    run.add_argument("--node-binary", default="node")
+    maps = commands.add_parser(
+        "render-maps",
+        help="Render four diagnostic maps from one verified materialized observation.",
+    )
+    maps.add_argument("--manifest", type=Path, required=True)
+    maps.add_argument("--materialized-manifest", type=Path, required=True)
+    maps.add_argument("--variant-id", required=True)
+    maps.add_argument("--output-dir", type=Path, required=True)
+    maps.add_argument("--resolution", type=int, choices=(224, 384), default=384)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> dict:
+    arguments = _parser().parse_args(argv)
+    if arguments.command == "run":
+        training_count, validation_source_count, _ = resolve_signal_experiment_profile(
+            arguments.experiment_profile,
+            arguments.training_count,
+            arguments.validation_source_count,
+        )
+        return run_signal_experiment(
+            arguments.manifest,
+            arguments.dataset_root,
+            arguments.output_dir,
+            experiment_profile=arguments.experiment_profile,
+            training_count=training_count,
+            validation_source_count=validation_source_count,
+            validation_seed=arguments.validation_seed,
+            sampler_seed=arguments.sampler_seed,
+            model_seed=arguments.model_seed,
+            epochs=arguments.epochs,
+            learning_rate=arguments.learning_rate,
+            resolution=arguments.resolution,
+            shard_raw_bytes=arguments.shard_raw_bytes,
+            node_binary=arguments.node_binary,
+        )
+    if arguments.command == "render-maps":
+        return render_signal_maps(
+            arguments.manifest,
+            arguments.materialized_manifest,
+            variant_id=arguments.variant_id,
+            output_directory=arguments.output_dir,
+            resolution=arguments.resolution,
+        )
+    raise ValueError(f"Unsupported signal command {arguments.command!r}.")
 
 
 if __name__ == "__main__":
-    main()
+    print(json.dumps(main(), sort_keys=True))

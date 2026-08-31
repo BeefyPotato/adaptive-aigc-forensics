@@ -40,6 +40,10 @@ _Avoid_: Augmentation pipeline, preprocessing
 The fixed-length deterministic description of low-level evidence supplied to the signal expert.
 _Avoid_: Signal image, forensic embedding
 
+**Experiment profile**:
+A named, provenance-bound selection of observations and resource limits for the same scientific pipeline. The `hackathon-v1` profile changes sample counts only; it does not change source partitions, corruptions, features, model architecture, leakage rules, or evaluation semantics.
+_Avoid_: Different model, relaxed pipeline, pilot system
+
 **Residual kernel**:
 The fixed internal smoothing operation used to isolate fine-detail evidence from luminance; it is not a real-world corruption.
 _Avoid_: Blur augmentation, Gaussian corruption
