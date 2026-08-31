@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { availableParallelism } from "node:os";
 
 import sharp from "sharp";
 
@@ -290,8 +291,14 @@ export async function materializeTrack5Observations(
     "Track 5 observations directory",
   );
   const materialized = new Array(manifest.observations.length);
+  const sourceGroups = [...observationsBySource.values()];
+  const activeSourceConcurrency = Math.min(concurrency, sourceGroups.length);
+  const noiseWorkerCount = Math.max(
+    1,
+    Math.min(8, Math.floor(availableParallelism() / activeSourceConcurrency)),
+  );
   await mapWithConcurrency(
-    [...observationsBySource.values()],
+    sourceGroups,
     concurrency,
     async (group) => {
       const sourcePath = await containedPath(
@@ -308,7 +315,7 @@ export async function materializeTrack5Observations(
           : `verified source bytes for Track 5 source ${JSON.stringify(source.source_id)}`,
       );
       for (const { index, observation } of group) {
-        const corrupted = await applyCorruption(decoded, observation);
+        const corrupted = await applyCorruption(decoded, observation, { noiseWorkerCount });
         const expectedWidth = observation.width ?? source.width;
         const expectedHeight = observation.height ?? source.height;
         if (

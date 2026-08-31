@@ -73,6 +73,8 @@ def experiment_provenance(training, validation=(), *, plan_sha256="c" * 64):
         "implementation_hash_contract_version": "utf8-lf-normalized-sha256-v1",
     }
     return {
+        "experiment_profile": "custom-v1",
+        "acceptance_scope": "non-acceptance",
         "training_plan_sha256": plan_sha256,
         "training_feature_records_sha256": digest(training),
         "validation_feature_records_sha256": digest(validation),
@@ -87,6 +89,8 @@ def training_provenance(training, *, plan_sha256="c" * 64):
     return {
         key: experiment[key]
         for key in (
+            "experiment_profile",
+            "acceptance_scope",
             "training_plan_sha256",
             "training_feature_records_sha256",
             "signal_feature_extraction_version",
@@ -388,6 +392,10 @@ class SignalExpertTests(unittest.TestCase):
 
         for name, mutate in (
             (
+                "relabelled acceptance scope",
+                lambda value: value.update(acceptance_scope="issue-6-full-acceptance"),
+            ),
+            (
                 "float provenance resolution",
                 lambda value: (
                     value.update(resolution=384.0),
@@ -401,7 +409,9 @@ class SignalExpertTests(unittest.TestCase):
         ):
             provenance = training_provenance(training)
             mutate(provenance)
-            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "resolution|provenance"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                ValueError, "scope|resolution|provenance"
+            ):
                 fit_normalization(
                     training,
                     manifest_metadata=META,
@@ -614,6 +624,12 @@ class SignalExpertTests(unittest.TestCase):
                     "feature runtime",
                     lambda value: value["feature_extraction"]["runtime_versions"].update(
                         numpy="stale"
+                    ),
+                ),
+                (
+                    "relabelled checkpoint acceptance scope",
+                    lambda value: value["experiment_provenance"].update(
+                        acceptance_scope="issue-6-full-acceptance"
                     ),
                 ),
                 ("negative seed", lambda value: value.update(seed=-1)),

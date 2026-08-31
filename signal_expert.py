@@ -26,6 +26,11 @@ CHECKPOINT_REVISION_PREFIX = "signal-checkpoint-v1"
 SELECTION_METRIC_VERSION = "signal-condition-balanced-bce-v1"
 SELECTION_METRIC_NAME = "condition-balanced-validation-bce"
 IMPLEMENTATION_HASH_CONTRACT_VERSION = "utf8-lf-normalized-sha256-v1"
+EXPERIMENT_SCOPE_BY_PROFILE = {
+    "custom-v1": "non-acceptance",
+    "hackathon-v1": "issue-6-timeboxed-acceptance",
+    "issue-6-full-v1": "issue-6-full-acceptance",
+}
 FEATURE_NAMES = tuple(
     [f"fourier_radial_log_energy_{index:02d}" for index in range(16)]
     + [
@@ -59,6 +64,8 @@ REQUIRED_MANIFEST_METADATA_FIELDS = (
     "feature_extraction_version",
 )
 REQUIRED_EXPERIMENT_PROVENANCE_FIELDS = (
+    "experiment_profile",
+    "acceptance_scope",
     "training_plan_sha256",
     "training_feature_records_sha256",
     "validation_feature_records_sha256",
@@ -67,6 +74,8 @@ REQUIRED_EXPERIMENT_PROVENANCE_FIELDS = (
     "feature_extraction",
 )
 REQUIRED_TRAINING_PROVENANCE_FIELDS = (
+    "experiment_profile",
+    "acceptance_scope",
     "training_plan_sha256",
     "training_feature_records_sha256",
     "signal_feature_extraction_version",
@@ -149,6 +158,12 @@ def _validated_experiment_provenance(experiment_provenance: dict) -> dict:
         "validation_feature_records_sha256",
     ):
         _require_sha256(experiment_provenance[field], f"Signal checkpoint experiment provenance {field}")
+    experiment_profile = experiment_provenance["experiment_profile"]
+    acceptance_scope = experiment_provenance["acceptance_scope"]
+    if EXPERIMENT_SCOPE_BY_PROFILE.get(experiment_profile) != acceptance_scope:
+        raise ValueError(
+            "Signal checkpoint experiment profile and acceptance scope are stale or incompatible."
+        )
     feature_version = experiment_provenance["signal_feature_extraction_version"]
     if not isinstance(feature_version, str) or not feature_version:
         raise ValueError("Signal checkpoint experiment provenance requires signal_feature_extraction_version.")
@@ -208,8 +223,14 @@ def _validated_training_provenance(training_provenance: dict) -> dict:
         raise ValueError("Signal normalization training provenance must be an object.")
     if set(training_provenance) != set(REQUIRED_TRAINING_PROVENANCE_FIELDS):
         raise ValueError(
-            "Signal normalization training provenance must contain exactly the training plan, "
-            "training feature digest, feature version, and resolution."
+            "Signal normalization training provenance must contain exactly the experiment "
+            "profile/scope, training plan, training feature digest, feature version, and resolution."
+        )
+    experiment_profile = training_provenance["experiment_profile"]
+    acceptance_scope = training_provenance["acceptance_scope"]
+    if EXPERIMENT_SCOPE_BY_PROFILE.get(experiment_profile) != acceptance_scope:
+        raise ValueError(
+            "Signal normalization experiment profile and acceptance scope are stale or incompatible."
         )
     _require_sha256(
         training_provenance["training_plan_sha256"],

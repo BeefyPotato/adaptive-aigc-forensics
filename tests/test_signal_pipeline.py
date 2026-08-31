@@ -348,15 +348,21 @@ class SignalPipelineTests(unittest.TestCase):
             plan = _build_plan(
                 manifest_path,
                 root / "signal-plan.json",
+                experiment_profile="custom-v1",
                 training_count=168,
                 sampler_seed=61,
+                validation_source_count=None,
+                validation_seed=61,
                 shard_raw_bytes=20_000,
                 node_binary="node",
             )
             arguments = {
                 "manifest_sha256": _file_sha256(manifest_path),
+                "experiment_profile": "custom-v1",
                 "training_count": 168,
                 "sampler_seed": 61,
+                "validation_source_count": None,
+                "validation_seed": 61,
                 "shard_raw_bytes": 20_000,
             }
             _validate_plan(plan, **arguments)
@@ -780,6 +786,8 @@ class SignalPipelineTests(unittest.TestCase):
             "src/contract-validation.js",
             "src/contracts.js",
             "src/deterministic-random.js",
+            "src/seeded-rgb-noise.js",
+            "src/seeded-rgb-noise-worker.js",
             "src/track5-conditions.js",
         ):
             self.assertIn(required, implementation)
@@ -821,12 +829,22 @@ class SignalPipelineTests(unittest.TestCase):
             {"resolution": 224.0},
             {"shard_raw_bytes": 0},
             {"shard_raw_bytes": 2**53},
+            {"experiment_profile": "unknown-profile"},
+            {"experiment_profile": "hackathon-v1", "training_count": 168},
+            {
+                "experiment_profile": "hackathon-v1",
+                "training_count": 8_064,
+                "validation_source_count": 200,
+            },
         )
         for configuration in invalid_configurations:
             with self.subTest(configuration=configuration), patch(
                 "signal_pipeline._read_json"
             ) as read_json:
-                with self.assertRaisesRegex(ValueError, "training|seed|epochs|learning|resolution|shard"):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "training|validation|profile|seed|epochs|learning|resolution|shard",
+                ):
                     run_signal_experiment(
                         "missing-manifest.json",
                         "missing-dataset",
@@ -906,7 +924,13 @@ class SignalPipelineTests(unittest.TestCase):
             validation = json.loads((output / "signal-validation-features.json").read_text(encoding="utf-8"))
             logits = json.loads((output / "signal-validation-logits.json").read_text(encoding="utf-8"))
             checkpoint = json.loads((output / "signal-model.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["experiment_profile"], "custom-v1")
+            self.assertEqual(result["acceptance_scope"], "non-acceptance")
+            self.assertEqual(checkpoint["experiment_provenance"]["experiment_profile"], "custom-v1")
+            self.assertEqual(checkpoint["experiment_provenance"]["acceptance_scope"], "non-acceptance")
             experiment_provenance = {
+                "experiment_profile": "custom-v1",
+                "acceptance_scope": "non-acceptance",
                 "training_plan_sha256": result["plan_sha256"],
                 "training_feature_records_sha256": training["records_sha256"],
                 "validation_feature_records_sha256": validation["records_sha256"],

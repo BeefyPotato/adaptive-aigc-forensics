@@ -54,6 +54,8 @@ class SignalCliTests(unittest.TestCase):
                     str(dataset),
                     "--output-dir",
                     str(output),
+                    "--experiment-profile",
+                    "issue-6-full-v1",
                     "--training-count",
                     "40320",
                     "--sampler-seed",
@@ -74,7 +76,10 @@ class SignalCliTests(unittest.TestCase):
             manifest,
             dataset,
             output,
+            experiment_profile="issue-6-full-v1",
             training_count=40_320,
+            validation_source_count=None,
+            validation_seed=61,
             sampler_seed=61,
             model_seed=67,
             epochs=3,
@@ -83,6 +88,43 @@ class SignalCliTests(unittest.TestCase):
             shard_raw_bytes=1_073_741_824,
             node_binary="node",
         )
+
+    def test_hackathon_profile_resolves_fixed_timeboxed_acceptance_counts(self):
+        with patch("signal_cli.run_signal_experiment") as run:
+            signal_cli.main([
+                "run",
+                "--manifest",
+                "manifest.json",
+                "--dataset-root",
+                "dataset",
+                "--output-dir",
+                "hackathon-output",
+                "--experiment-profile",
+                "hackathon-v1",
+            ])
+
+        self.assertEqual(run.call_args.kwargs["experiment_profile"], "hackathon-v1")
+        self.assertEqual(run.call_args.kwargs["training_count"], 8_064)
+        self.assertEqual(run.call_args.kwargs["validation_source_count"], 400)
+        self.assertEqual(run.call_args.kwargs["validation_seed"], 61)
+
+    def test_hackathon_profile_rejects_count_overrides(self):
+        with patch("signal_cli.run_signal_experiment") as run:
+            with self.assertRaisesRegex(ValueError, "hackathon-v1.*8,064"):
+                signal_cli.main([
+                    "run",
+                    "--manifest",
+                    "manifest.json",
+                    "--dataset-root",
+                    "dataset",
+                    "--output-dir",
+                    "hackathon-output",
+                    "--experiment-profile",
+                    "hackathon-v1",
+                    "--training-count",
+                    "168",
+                ])
+        run.assert_not_called()
 
     def test_old_precomputed_feature_interface_is_not_accepted(self):
         with contextlib.redirect_stderr(io.StringIO()):

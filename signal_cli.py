@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from signal_maps import render_signal_maps
-from signal_pipeline import run_signal_experiment
+from signal_pipeline import resolve_signal_experiment_profile, run_signal_experiment
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -24,7 +24,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--manifest", type=Path, required=True)
     run.add_argument("--dataset-root", type=Path, required=True)
     run.add_argument("--output-dir", type=Path, required=True)
-    run.add_argument("--training-count", type=int, default=40_320)
+    run.add_argument(
+        "--experiment-profile",
+        choices=("hackathon-v1", "issue-6-full-v1", "custom-v1"),
+        default="hackathon-v1",
+    )
+    run.add_argument("--training-count", type=int)
+    run.add_argument("--validation-source-count", type=int)
+    run.add_argument("--validation-seed", type=int, default=61)
     run.add_argument("--sampler-seed", type=int, default=61)
     run.add_argument("--model-seed", type=int, default=61)
     run.add_argument("--epochs", type=int, default=200)
@@ -47,11 +54,19 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> dict:
     arguments = _parser().parse_args(argv)
     if arguments.command == "run":
+        training_count, validation_source_count, _ = resolve_signal_experiment_profile(
+            arguments.experiment_profile,
+            arguments.training_count,
+            arguments.validation_source_count,
+        )
         return run_signal_experiment(
             arguments.manifest,
             arguments.dataset_root,
             arguments.output_dir,
-            training_count=arguments.training_count,
+            experiment_profile=arguments.experiment_profile,
+            training_count=training_count,
+            validation_source_count=validation_source_count,
+            validation_seed=arguments.validation_seed,
             sampler_seed=arguments.sampler_seed,
             model_seed=arguments.model_seed,
             epochs=arguments.epochs,

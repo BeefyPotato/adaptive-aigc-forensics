@@ -11,6 +11,7 @@ import {
   requireObject,
 } from "./contract-validation.js";
 import { canonicalJson, variantIdentifier } from "./contracts.js";
+import { deterministicHexRank } from "./deterministic-random.js";
 import { TRACK5_CONDITION_MATRIX } from "./track5-conditions.js";
 
 const CONTROLLED_SPLITS = new Set([
@@ -22,6 +23,11 @@ const CONTROLLED_SPLITS = new Set([
 const SIGNAL_PHASES = Object.freeze(["expert-training", "internal-validation"]);
 const PLAN_SCHEMA_VERSION = "signal-experiment-plan-v1";
 const SHARD_SCHEMA_VERSION = "signal-experiment-shard-v1";
+const EXPERIMENT_PROFILE_SCOPE = new Map([
+  ["custom-v1", "non-acceptance"],
+  ["hackathon-v1", "issue-6-timeboxed-acceptance"],
+  ["issue-6-full-v1", "issue-6-full-acceptance"],
+]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -337,12 +343,60 @@ function trainingRecords(manifest, trainingCount, trainingSeed) {
   return orderedRecords([...recordByVariant.values()]);
 }
 
-function validationRecords(manifest) {
-  return orderedRecords(
-    manifest.observations
-      .filter(({ split }) => split === "internal-validation")
-      .map((observation) => ({ ...observation, sample_weight: 1 })),
+function validationRecords(manifest, validationSourceCount, validationSeed) {
+  const candidatesByClass = new Map([
+    [0, []],
+    [1, []],
+  ]);
+  for (const source of manifest.sources) {
+    if (source.split === "internal-validation") {
+      candidatesByClass.get(source.authenticity_label).push(source);
+    }
+  }
+  const availableCount = [...candidatesByClass.values()].reduce(
+    (total, candidates) => total + candidates.length,
+    0,
   );
+  const requestedCount = validationSourceCount ?? availableCount;
+  requirePositiveSafeInteger(
+    requestedCount,
+    "validationSourceCount",
+    "signal planning options",
+  );
+  if (requestedCount % 2 !== 0) {
+    throw new ContractError(
+      "signal planning options.validationSourceCount must be even for class balance.",
+    );
+  }
+  const perClass = requestedCount / 2;
+  const selectedSourceIds = new Set();
+  for (const [label, candidates] of candidatesByClass) {
+    if (candidates.length < perClass) {
+      throw new ContractError(
+        `Signal internal-validation class ${label} has ${candidates.length} sources; ` +
+          `${perClass} are required.`,
+      );
+    }
+    const ranked = candidates.toSorted((left, right) => {
+      const rankOrder = compareText(
+        deterministicHexRank(validationSeed, "signal-internal-validation", left.source_id),
+        deterministicHexRank(validationSeed, "signal-internal-validation", right.source_id),
+      );
+      return rankOrder || compareText(left.source_id, right.source_id);
+    });
+    for (const source of ranked.slice(0, perClass)) selectedSourceIds.add(source.source_id);
+  }
+  return {
+    records: orderedRecords(
+      manifest.observations
+        .filter(
+          ({ split, source_id: sourceId }) =>
+            split === "internal-validation" && selectedSourceIds.has(sourceId),
+        )
+        .map((observation) => ({ ...observation, sample_weight: 1 })),
+    ),
+    sourceCount: selectedSourceIds.size,
+  };
 }
 
 function groupRecordsBySource(records, sourceById) {
@@ -416,10 +470,13 @@ function partitionPhase(phase, records, sourceById, rawByteBudget, header) {
 export function buildSignalExperimentPlan(
   manifest,
   {
+    experimentProfile = "custom-v1",
     parentRecipeManifestSha256,
     rawByteBudget,
     trainingCount,
     trainingSeed,
+    validationSourceCount = null,
+    validationSeed = 61,
   },
 ) {
   requireLowercaseHex(
@@ -431,14 +488,49 @@ export function buildSignalExperimentPlan(
   requirePositiveSafeInteger(rawByteBudget, "rawByteBudget", "signal planning options");
   requireNonnegativeInteger(trainingCount, "trainingCount", "signal planning options");
   requireNonnegativeInteger(trainingSeed, "trainingSeed", "signal planning options");
+  requireNonnegativeInteger(validationSeed, "validationSeed", "signal planning options");
+  requireNonemptyString(experimentProfile, "experimentProfile", "signal planning options");
   if (trainingCount === 0) {
     throw new ContractError("signal planning options.trainingCount must be greater than zero.");
   }
+  if (!EXPERIMENT_PROFILE_SCOPE.has(experimentProfile)) {
+    throw new ContractError(
+      "signal planning options.experimentProfile must be a supported profile.",
+    );
+  }
+  if (validationSourceCount !== null) {
+    requirePositiveSafeInteger(
+      validationSourceCount,
+      "validationSourceCount",
+      "signal planning options",
+    );
+  }
+  if (experimentProfile === "hackathon-v1") {
+    if (trainingCount !== 8_064) {
+      throw new ContractError("hackathon-v1 requires exactly 8,064 training draws.");
+    }
+    if (validationSourceCount !== 400) {
+      throw new ContractError(
+        "hackathon-v1 requires exactly 400 internal-validation sources.",
+      );
+    }
+  }
+  if (experimentProfile === "issue-6-full-v1") {
+    if (trainingCount !== 40_320) {
+      throw new ContractError("issue-6-full-v1 requires exactly 40,320 training draws.");
+    }
+    if (validationSourceCount !== null) {
+      throw new ContractError(
+        "issue-6-full-v1 requires the complete internal-validation source partition.",
+      );
+    }
+  }
   const { sourceById } = validateRecipeManifest(manifest);
   const header = recipeManifestHeader(manifest);
+  const validation = validationRecords(manifest, validationSourceCount, validationSeed);
   const phaseRecords = new Map([
     ["expert-training", trainingRecords(manifest, trainingCount, trainingSeed)],
-    ["internal-validation", validationRecords(manifest)],
+    ["internal-validation", validation.records],
   ]);
   const phaseCores = SIGNAL_PHASES.map((phase) => ({
     phase,
@@ -461,10 +553,14 @@ export function buildSignalExperimentPlan(
   }));
   const identity = {
     plan_schema_version: PLAN_SCHEMA_VERSION,
+    experiment_profile: experimentProfile,
+    acceptance_scope: EXPERIMENT_PROFILE_SCOPE.get(experimentProfile),
     parent_recipe_manifest_sha256: parentRecipeManifestSha256,
     raw_byte_budget: rawByteBudget,
     training_count: trainingCount,
     training_seed: trainingSeed,
+    validation_source_count: validation.sourceCount,
+    validation_seed: validationSeed,
     phases: phaseCores,
   };
   const planSha256 = sha256(canonicalJson(identity));

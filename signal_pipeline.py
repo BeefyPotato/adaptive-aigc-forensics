@@ -43,6 +43,16 @@ MATERIALIZATION_SCHEMA_VERSION = "track5-materialized-observations-v1"
 MATERIALIZED_ENCODING = "lossless-rgb-png-v1"
 JAVASCRIPT_MAX_SAFE_INTEGER = 2**53 - 1
 BALANCED_TRAINING_GRANULARITY = 168
+EXPERIMENT_SCOPE_BY_PROFILE = {
+    "custom-v1": "non-acceptance",
+    "hackathon-v1": "issue-6-timeboxed-acceptance",
+    "issue-6-full-v1": "issue-6-full-acceptance",
+}
+EXPERIMENT_PROFILE_DEFAULTS = {
+    "custom-v1": (40_320, None),
+    "hackathon-v1": (8_064, 400),
+    "issue-6-full-v1": (40_320, None),
+}
 IMPLEMENTATION_FILES = (
     "package.json",
     "package-lock.json",
@@ -65,6 +75,8 @@ IMPLEMENTATION_FILES = (
     "src/materialized-observations.js",
     "src/corruption-harness.js",
     "src/deterministic-random.js",
+    "src/seeded-rgb-noise.js",
+    "src/seeded-rgb-noise-worker.js",
     "src/track5-conditions.js",
 )
 FEATURE_IMPLEMENTATION_FILES = IMPLEMENTATION_FILES
@@ -105,6 +117,49 @@ def _strict_json_equal(left: object, right: object) -> bool:
             for left_value, right_value in zip(left, right)
         )
     return left == right
+
+
+def resolve_signal_experiment_profile(
+    experiment_profile: str,
+    training_count: int | None,
+    validation_source_count: int | None,
+) -> tuple[int, int | None, str]:
+    if experiment_profile not in EXPERIMENT_PROFILE_DEFAULTS:
+        raise ValueError("Signal experiment_profile must be a supported profile.")
+    default_training_count, default_validation_source_count = EXPERIMENT_PROFILE_DEFAULTS[
+        experiment_profile
+    ]
+    resolved_training_count = (
+        default_training_count if training_count is None else training_count
+    )
+    resolved_validation_source_count = (
+        default_validation_source_count
+        if validation_source_count is None and experiment_profile == "hackathon-v1"
+        else validation_source_count
+    )
+    if experiment_profile == "hackathon-v1":
+        if resolved_training_count != 8_064:
+            raise ValueError(
+                "Signal hackathon-v1 requires exactly 8,064 training draws."
+            )
+        if resolved_validation_source_count != 400:
+            raise ValueError(
+                "Signal hackathon-v1 requires exactly 400 validation sources."
+            )
+    elif experiment_profile == "issue-6-full-v1":
+        if resolved_training_count != 40_320:
+            raise ValueError(
+                "Signal issue-6-full-v1 requires exactly 40,320 training draws."
+            )
+        if resolved_validation_source_count is not None:
+            raise ValueError(
+                "Signal issue-6-full-v1 requires the complete validation partition."
+            )
+    return (
+        resolved_training_count,
+        resolved_validation_source_count,
+        EXPERIMENT_SCOPE_BY_PROFILE[experiment_profile],
+    )
 
 
 def _file_sha256(path: Path) -> str:
@@ -257,8 +312,11 @@ def _build_plan(
     manifest_path: Path,
     output_path: Path,
     *,
+    experiment_profile: str,
     training_count: int,
     sampler_seed: int,
+    validation_source_count: int | None,
+    validation_seed: int,
     shard_raw_bytes: int,
     node_binary: str,
 ) -> dict:
@@ -269,10 +327,16 @@ def _build_plan(
             "plan",
             "--manifest",
             str(manifest_path),
+            "--experiment-profile",
+            experiment_profile,
             "--training-count",
             str(training_count),
             "--training-seed",
             str(sampler_seed),
+            "--validation-source-count",
+            "all" if validation_source_count is None else str(validation_source_count),
+            "--validation-seed",
+            str(validation_seed),
             "--raw-byte-budget",
             str(shard_raw_bytes),
             "--output",
@@ -284,8 +348,11 @@ def _build_plan(
     _validate_plan(
         plan,
         manifest_sha256=_file_sha256(manifest_path),
+        experiment_profile=experiment_profile,
         training_count=training_count,
         sampler_seed=sampler_seed,
+        validation_source_count=validation_source_count,
+        validation_seed=validation_seed,
         shard_raw_bytes=shard_raw_bytes,
     )
     return plan
@@ -318,21 +385,45 @@ def _validate_plan(
     plan: dict,
     *,
     manifest_sha256: str,
+    experiment_profile: str,
     training_count: int,
     sampler_seed: int,
+    validation_source_count: int | None,
+    validation_seed: int,
     shard_raw_bytes: int,
 ) -> None:
+    resolved_training_count, resolved_validation_source_count, acceptance_scope = (
+        resolve_signal_experiment_profile(
+            experiment_profile,
+            training_count,
+            validation_source_count,
+        )
+    )
+    if resolved_training_count != training_count:
+        raise ValueError("Signal experiment plan training profile did not resolve exactly.")
     for name, value in (
         ("training_count", training_count),
         ("shard_raw_bytes", shard_raw_bytes),
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"Signal experiment plan expected {name} must be a positive integer.")
-    if isinstance(sampler_seed, bool) or not isinstance(sampler_seed, int) or sampler_seed < 0:
-        raise ValueError("Signal experiment plan expected sampler_seed must be a non-negative integer.")
+    for name, value in (("sampler_seed", sampler_seed), ("validation_seed", validation_seed)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(
+                f"Signal experiment plan expected {name} must be a non-negative integer."
+            )
+    if validation_source_count is not None and (
+        isinstance(validation_source_count, bool)
+        or not isinstance(validation_source_count, int)
+        or validation_source_count <= 0
+    ):
+        raise ValueError(
+            "Signal experiment plan expected validation_source_count must be positive."
+        )
     for name, value in (
         ("training_count", training_count),
         ("sampler_seed", sampler_seed),
+        ("validation_seed", validation_seed),
         ("shard_raw_bytes", shard_raw_bytes),
     ):
         if value > JAVASCRIPT_MAX_SAFE_INTEGER:
@@ -347,9 +438,12 @@ def _validate_plan(
     if plan.get("plan_schema_version") != "signal-experiment-plan-v1":
         raise ValueError("Signal experiment plan schema is stale or incompatible.")
     for field, expected in (
+        ("experiment_profile", experiment_profile),
+        ("acceptance_scope", acceptance_scope),
         ("parent_recipe_manifest_sha256", manifest_sha256),
         ("training_count", training_count),
         ("training_seed", sampler_seed),
+        ("validation_seed", validation_seed),
         ("raw_byte_budget", shard_raw_bytes),
     ):
         if not _strict_json_equal(plan.get(field), expected):
@@ -529,6 +623,20 @@ def _validate_plan(
     if sum(record["sample_weight"] for record in training_records) != training_count:
         raise ValueError("Signal expert-training plan does not match requested training_count.")
     validation_records = records_by_phase["internal-validation"]
+    actual_validation_source_count = len(sources_by_phase["internal-validation"])
+    if not _strict_json_equal(
+        plan.get("validation_source_count"), actual_validation_source_count
+    ):
+        raise ValueError(
+            "Signal internal-validation plan has incompatible validation_source_count."
+        )
+    if (
+        resolved_validation_source_count is not None
+        and actual_validation_source_count != resolved_validation_source_count
+    ):
+        raise ValueError(
+            "Signal internal-validation plan does not match the requested source subset."
+        )
     expected_conditions = set(CANONICAL_VALIDATION_CONDITIONS)
     conditions_by_source = {source_id: set() for source_id in sources_by_phase["internal-validation"]}
     for record in validation_records:
@@ -683,8 +791,11 @@ def _validate_existing_run_marker(
         _validate_plan(
             plan,
             manifest_sha256=manifest_metadata["manifest_sha256"],
+            experiment_profile=requested["experiment_profile"],
             training_count=plan["training_count"],
             sampler_seed=requested["sampler_seed"],
+            validation_source_count=requested["validation_source_limit"],
+            validation_seed=requested["validation_seed"],
             shard_raw_bytes=requested["shard_raw_bytes"],
         )
         phases = {phase["phase"]: phase for phase in plan["phases"]}
@@ -704,6 +815,8 @@ def _validate_existing_run_marker(
             expected_feature_extraction=expected_extraction,
         )
         experiment_provenance = {
+            "experiment_profile": requested["experiment_profile"],
+            "acceptance_scope": requested["acceptance_scope"],
             "training_plan_sha256": plan_sha256,
             "training_feature_records_sha256": training["records_sha256"],
             "validation_feature_records_sha256": validation["records_sha256"],
@@ -714,6 +827,8 @@ def _validate_existing_run_marker(
         training_provenance = {
             field: experiment_provenance[field]
             for field in (
+                "experiment_profile",
+                "acceptance_scope",
                 "training_plan_sha256",
                 "training_feature_records_sha256",
                 "signal_feature_extraction_version",
@@ -1511,7 +1626,10 @@ def run_signal_experiment(
     dataset_root: Path | str,
     output_directory: Path | str,
     *,
-    training_count: int = 40_320,
+    experiment_profile: str = "custom-v1",
+    training_count: int | None = 40_320,
+    validation_source_count: int | None = None,
+    validation_seed: int = 61,
     sampler_seed: int = 61,
     model_seed: int = 61,
     epochs: int = 200,
@@ -1520,6 +1638,13 @@ def run_signal_experiment(
     shard_raw_bytes: int = 2**30,
     node_binary: str = "node",
 ) -> dict:
+    training_count, validation_source_count, acceptance_scope = (
+        resolve_signal_experiment_profile(
+            experiment_profile,
+            training_count,
+            validation_source_count,
+        )
+    )
     for name, value in (
         ("training_count", training_count),
         ("epochs", epochs),
@@ -1527,12 +1652,17 @@ def run_signal_experiment(
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"Signal {name} must be a positive integer.")
-    for name, value in (("sampler_seed", sampler_seed), ("model_seed", model_seed)):
+    for name, value in (
+        ("sampler_seed", sampler_seed),
+        ("validation_seed", validation_seed),
+        ("model_seed", model_seed),
+    ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"Signal {name} must be a non-negative integer seed.")
     for name, value in (
         ("training_count", training_count),
         ("sampler_seed", sampler_seed),
+        ("validation_seed", validation_seed),
         ("shard_raw_bytes", shard_raw_bytes),
     ):
         if value > JAVASCRIPT_MAX_SAFE_INTEGER:
@@ -1580,8 +1710,11 @@ def run_signal_experiment(
         plan = _build_plan(
             staged_manifest_path,
             Path(staging_directory) / "signal-plan.json",
+            experiment_profile=experiment_profile,
             training_count=training_count,
             sampler_seed=sampler_seed,
+            validation_source_count=validation_source_count,
+            validation_seed=validation_seed,
             shard_raw_bytes=shard_raw_bytes,
             node_binary=node_binary,
         )
@@ -1592,6 +1725,10 @@ def run_signal_experiment(
     if set(phases) != {"expert-training", "internal-validation"}:
         raise ValueError("Signal plan must contain only expert-training and internal-validation.")
     requested_run = {
+        "experiment_profile": experiment_profile,
+        "acceptance_scope": acceptance_scope,
+        "validation_source_limit": validation_source_count,
+        "validation_seed": validation_seed,
         "sampler_seed": sampler_seed,
         "model_seed": model_seed,
         "epochs": epochs,
@@ -1664,6 +1801,8 @@ def run_signal_experiment(
     )
     _progress("fitting expert-training normalization and signal weights")
     experiment_provenance = {
+        "experiment_profile": experiment_profile,
+        "acceptance_scope": acceptance_scope,
         "training_plan_sha256": plan_sha256,
         "training_feature_records_sha256": training_cache["records_sha256"],
         "validation_feature_records_sha256": validation_cache["records_sha256"],
@@ -1674,6 +1813,8 @@ def run_signal_experiment(
     training_provenance = {
         field: experiment_provenance[field]
         for field in (
+            "experiment_profile",
+            "acceptance_scope",
             "training_plan_sha256",
             "training_feature_records_sha256",
             "signal_feature_extraction_version",
@@ -1802,6 +1943,8 @@ def run_signal_experiment(
     }
     run_summary = {
         "run_schema_version": "signal-experiment-run-v1",
+        "experiment_profile": experiment_profile,
+        "acceptance_scope": acceptance_scope,
         "manifest_metadata": manifest_metadata,
         "plan_sha256": plan_sha256,
         "training_sample_count": training_cache["selection"]["sample_count"],
@@ -1809,6 +1952,8 @@ def run_signal_experiment(
         "training_source_count": len({record["source_id"] for record in training_records}),
         "validation_observation_count": len(validation_records),
         "validation_source_count": len({record["source_id"] for record in validation_records}),
+        "validation_source_limit": validation_source_count,
+        "validation_seed": validation_seed,
         "sampler_seed": sampler_seed,
         "model_seed": model_seed,
         "epochs": epochs,

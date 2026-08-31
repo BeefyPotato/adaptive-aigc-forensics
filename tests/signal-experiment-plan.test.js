@@ -15,21 +15,31 @@ import { buildObservationRecords } from "../src/track5-manifest.js";
 const PARENT_MANIFEST_SHA256 = "a".repeat(64);
 const MATERIALIZABLE_SOURCE_RAW_BYTES = 16 * 12 * 3 * 20;
 
-function recipeManifest() {
+function recipeManifest({ validationSourcesPerClass = 1 } = {}) {
   const sources = [
     "expert-training",
     "fusion-training",
     "internal-validation",
     "sealed-internal-test",
   ].flatMap((split) =>
-    [0, 1].map((authenticityLabel) => ({
-      source_id: `${split}-class-${authenticityLabel}`,
-      image_path: `images/${split}-class-${authenticityLabel}.png`,
-      authenticity_label: authenticityLabel,
-      split,
-      width: 8,
-      height: 6,
-    })),
+    [0, 1].flatMap((authenticityLabel) =>
+      Array.from(
+        { length: split === "internal-validation" ? validationSourcesPerClass : 1 },
+        (_, index) => {
+          const suffix = validationSourcesPerClass === 1 || split !== "internal-validation"
+            ? ""
+            : `-${index}`;
+          return {
+            source_id: `${split}-class-${authenticityLabel}${suffix}`,
+            image_path: `images/${split}-class-${authenticityLabel}${suffix}.png`,
+            authenticity_label: authenticityLabel,
+            split,
+            width: 8,
+            height: 6,
+          };
+        },
+      ),
+    ),
   );
   const corruption = {
     root_seed: 23,
@@ -103,6 +113,10 @@ test("signal plan deterministically selects only balanced expert training and co
 
   assert.deepEqual(plan, repeated);
   assert.equal(plan.plan_schema_version, "signal-experiment-plan-v1");
+  assert.equal(plan.experiment_profile, "custom-v1");
+  assert.equal(plan.acceptance_scope, "non-acceptance");
+  assert.equal(plan.validation_source_count, 2);
+  assert.equal(plan.validation_seed, 61);
   assert.equal(plan.parent_recipe_manifest_sha256, PARENT_MANIFEST_SHA256);
   assert.match(plan.plan_sha256, /^[0-9a-f]{64}$/u);
   assert.deepEqual(
@@ -141,6 +155,91 @@ test("signal plan deterministically selects only balanced expert training and co
       assert.ok(shard.records.every(({ split }) => split === phase.phase));
     }
   }
+});
+
+test("signal hackathon planning selects a deterministic class-balanced whole-source validation subset", () => {
+  const manifest = recipeManifest({ validationSourcesPerClass: 8 });
+  const options = {
+    parentRecipeManifestSha256: PARENT_MANIFEST_SHA256,
+    rawByteBudget: 8 * 6 * 3 * 20 * 4,
+    trainingCount: 168,
+    trainingSeed: 61,
+    validationSourceCount: 8,
+    validationSeed: 73,
+    experimentProfile: "custom-v1",
+  };
+
+  const plan = buildSignalExperimentPlan(manifest, options);
+  const repeated = buildSignalExperimentPlan(
+    {
+      ...manifest,
+      sources: manifest.sources.toReversed(),
+      observations: manifest.observations.toReversed(),
+    },
+    options,
+  );
+  const validation = plan.phases
+    .find(({ phase }) => phase === "internal-validation")
+    .shards.flatMap(({ records }) => records);
+  const selectedSources = new Map();
+  for (const record of validation) {
+    selectedSources.set(record.source_id, record.authenticity_label);
+  }
+
+  assert.deepEqual(plan, repeated);
+  assert.equal(plan.validation_source_count, 8);
+  assert.equal(validation.length, 160);
+  assert.deepEqual(
+    Object.fromEntries(
+      [0, 1].map((label) => [
+        label,
+        [...selectedSources.values()].filter((candidate) => candidate === label).length,
+      ]),
+    ),
+    { 0: 4, 1: 4 },
+  );
+  for (const sourceId of selectedSources.keys()) {
+    assert.equal(validation.filter(({ source_id: candidate }) => candidate === sourceId).length, 20);
+  }
+
+  const differentSeed = buildSignalExperimentPlan(manifest, {
+    ...options,
+    validationSeed: 74,
+  });
+  assert.notEqual(differentSeed.plan_sha256, plan.plan_sha256);
+});
+
+test("named signal profiles reject counts that could mislabel time-boxed or full acceptance artifacts", () => {
+  const manifest = recipeManifest();
+  const options = {
+    parentRecipeManifestSha256: PARENT_MANIFEST_SHA256,
+    rawByteBudget: 8 * 6 * 3 * 20,
+    trainingCount: 168,
+    trainingSeed: 61,
+  };
+
+  assert.throws(
+    () => buildSignalExperimentPlan(manifest, {
+      ...options,
+      experimentProfile: "hackathon-v1",
+      validationSourceCount: 400,
+    }),
+    /hackathon-v1.*8,064|8,064.*hackathon-v1/i,
+  );
+  assert.throws(
+    () => buildSignalExperimentPlan(manifest, {
+      ...options,
+      experimentProfile: "issue-6-full-v1",
+    }),
+    /issue-6-full-v1.*40,320|40,320.*issue-6-full-v1/i,
+  );
+  assert.throws(
+    () => buildSignalExperimentPlan(manifest, {
+      ...options,
+      experimentProfile: "unknown-profile",
+    }),
+    /experimentProfile.*supported/i,
+  );
 });
 
 test("plan CLI hashes the recipe once and writes standalone bounded shard plans", async () => {

@@ -56,8 +56,11 @@ async function planCommand(argv) {
     argv,
     new Set([
       "--manifest",
+      "--experiment-profile",
       "--training-count",
       "--training-seed",
+      "--validation-source-count",
+      "--validation-seed",
       "--raw-byte-budget",
       "--output",
     ]),
@@ -72,10 +75,17 @@ async function planCommand(argv) {
   const manifestBytes = await readFile(values.get("--manifest"));
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   const plan = buildSignalExperimentPlan(manifest, {
+    experimentProfile: values.get("--experiment-profile") ?? "custom-v1",
     parentRecipeManifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
     rawByteBudget: Number(values.get("--raw-byte-budget")),
     trainingCount: Number(values.get("--training-count")),
     trainingSeed: Number(values.get("--training-seed")),
+    validationSourceCount:
+      values.get("--validation-source-count") === undefined ||
+      values.get("--validation-source-count") === "all"
+        ? null
+        : Number(values.get("--validation-source-count")),
+    validationSeed: Number(values.get("--validation-seed") ?? 61),
   });
   const requestedOutputPath = resolve(values.get("--output"));
   const outputRoot = await resolveManagedOutputRoot(
@@ -111,6 +121,8 @@ async function planCommand(argv) {
   process.stdout.write(
     `${JSON.stringify({
       command: "plan",
+      acceptance_scope: plan.acceptance_scope,
+      experiment_profile: plan.experiment_profile,
       parent_recipe_manifest_sha256: plan.parent_recipe_manifest_sha256,
       phase_shard_counts: Object.fromEntries(
         plan.phases.map(({ phase, shards }) => [phase, shards.length]),
@@ -118,6 +130,7 @@ async function planCommand(argv) {
       plan_path: outputPath,
       plan_sha256: plan.plan_sha256,
       shard_directory: shardDirectory,
+      validation_source_count: plan.validation_source_count,
     })}\n`,
   );
 }
