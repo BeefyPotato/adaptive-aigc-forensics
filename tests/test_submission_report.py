@@ -149,8 +149,10 @@ class SubmissionReportTests(unittest.TestCase):
 
         evidence = copy.deepcopy(self.evidence)
         case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
-        case["source_id"] = "source-<&>\"'`|[]*_"
-        case["variant_id"] = "variant-<&>\"'`|[]*_"
+        case["source_id"] = "source-safe"
+        case["variant_id"] = "variant-safe"
+        evidence["system_id"] = "system-<&>\"'`|[]*_"
+        evidence["limitations"][0] = "limitation-<&>\"'`|[]*_"
         self.reset_evidence(evidence)
         first = render_submission_report(self.evidence_dir, self.output_dir)
         first_bytes = {
@@ -161,8 +163,8 @@ class SubmissionReportTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first_bytes, {path.name: path.read_bytes() for path in self.output_dir.iterdir()})
         markdown = first_bytes["robustness-and-errors.md"].decode("utf-8")
-        self.assertIn("source-&lt;&amp;&gt;&quot;&#x27;\\`\\|\\[\\]\\*\\_", markdown)
-        self.assertNotIn("source-<&>", markdown)
+        self.assertIn("system-&lt;&amp;&gt;&quot;&#x27;\\`\\|\\[\\]\\*\\_", markdown)
+        self.assertNotIn("system-<&>", markdown)
 
     def test_report_never_publishes_the_threshold_logit(self):
         from submission_report import render_submission_report
@@ -182,6 +184,8 @@ class SubmissionReportTests(unittest.TestCase):
             "multiline identifier": lambda case: case.__setitem__("source_id", "source\nsecond-line"),
             "carriage-return identifier": lambda case: case.__setitem__("source_id", "source\rsecond-line"),
             "path-like identifier": lambda case: case.__setitem__("variant_id", "C:/private/image.png"),
+            "drive-relative identifier": lambda case: case.__setitem__("variant_id", "C:private-report"),
+            "URI-like identifier": lambda case: case.__setitem__("source_id", "file:private-report"),
             "image path": lambda case: case.__setitem__("image_path", "private/image.png"),
             "authenticity label": lambda case: case.__setitem__("authenticity_label", 1),
             "logit": lambda case: case.__setitem__("logit", 0.5),

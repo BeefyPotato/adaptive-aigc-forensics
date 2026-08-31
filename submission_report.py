@@ -128,10 +128,10 @@ def _markdown_text(value, context):
     return text
 
 
-def _identifier(value, context):
+def _opaque_identifier(value, context):
     identifier = _single_line_text(value, context)
-    if "/" in identifier or "\\" in identifier or ".." in identifier:
-        raise ValueError(f"{context} must not be path-like.")
+    if any(not ("A" <= character <= "Z" or "a" <= character <= "z" or "0" <= character <= "9" or character in "-_") for character in identifier):
+        raise ValueError(f"{context} must be an opaque ASCII identifier.")
     return identifier
 
 
@@ -255,8 +255,8 @@ def _validated_errors(error_analysis):
             continue
         if not isinstance(case, dict) or set(case) != required_case:
             raise ValueError("Submission evidence representative case is incomplete or unexpected.")
-        _identifier(case["source_id"], "Submission evidence representative source ID")
-        _identifier(case["variant_id"], "Submission evidence representative variant ID")
+        _opaque_identifier(case["source_id"], "Submission evidence representative source ID")
+        _opaque_identifier(case["variant_id"], "Submission evidence representative variant ID")
         if case["condition_family"] not in FAMILIES:
             raise ValueError("Submission evidence representative condition family is invalid.")
         _single_line_text(case["severity"], "Submission evidence representative severity")
