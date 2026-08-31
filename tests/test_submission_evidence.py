@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 import tempfile
 import hashlib
+import copy
 from pathlib import Path
 
 TRUSTED_GENERATION_REVISION = (
@@ -18,7 +19,11 @@ def completed_generation_fixture():
         "worst_family_severity": {
             "family": "noise", "severity": "sigma-0.1", "auroc": 0.810425,
         },
-        "threshold_diagnostics": {"threshold_logit": 0.0},
+        "threshold_diagnostics": {
+            "threshold_logit": 0.0,
+            "sensitivity": 0.625,
+            "specificity": 0.75,
+        },
     }
     raw_rgb = {
         "clean_auroc": 0.97505,
@@ -27,7 +32,11 @@ def completed_generation_fixture():
         "worst_family_severity": {
             "family": "noise", "severity": "sigma-0.1", "auroc": 0.732425,
         },
-        "threshold_diagnostics": {"threshold_logit": 0.0},
+        "threshold_diagnostics": {
+            "threshold_logit": 0.0,
+            "sensitivity": 0.625,
+            "specificity": 0.75,
+        },
     }
     rows = [
         {
@@ -123,10 +132,55 @@ class SubmissionEvidenceTests(unittest.TestCase):
             expected_generation_revision=TRUSTED_GENERATION_REVISION,
             expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
         )
-        self.assertEqual(
-            raw_rgb["metrics"],
-            generation["bundle"]["evaluation"]["candidates"]["raw-rgb-only"],
+        expected_raw_rgb = copy.deepcopy(
+            generation["bundle"]["evaluation"]["candidates"]["raw-rgb-only"]
         )
+        expected_raw_rgb["threshold_diagnostics"].update(
+            {"false_positive_rate": 0.25, "false_negative_rate": 0.375}
+        )
+        self.assertEqual(raw_rgb["metrics"], expected_raw_rgb)
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_persists_literal_false_rates_from_threshold_diagnostics(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        reader.return_value = completed_generation_fixture()
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        threshold = evidence["metrics"]["threshold_diagnostics"]
+        self.assertEqual(threshold["sensitivity"], 0.625)
+        self.assertEqual(threshold["specificity"], 0.75)
+        self.assertEqual(threshold["false_positive_rate"], 0.25)
+        self.assertEqual(threshold["false_negative_rate"], 0.375)
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_rejects_nonfinite_or_out_of_range_threshold_rates(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        generation = completed_generation_fixture()
+        generation["bundle"]["evaluation"]["candidates"]["learned-static-fusion"]["threshold_diagnostics"]["sensitivity"] = float("nan")
+        reader.return_value = generation
+        with self.assertRaisesRegex(ValueError, "sensitivity must be finite"):
+            build_submission_evidence(
+                "frozen-generation",
+                candidate="learned-static-fusion",
+                expected_generation_revision=TRUSTED_GENERATION_REVISION,
+                expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+            )
+        generation = completed_generation_fixture()
+        generation["bundle"]["evaluation"]["candidates"]["learned-static-fusion"]["threshold_diagnostics"]["specificity"] = 1.01
+        reader.return_value = generation
+        with self.assertRaisesRegex(ValueError, "specificity must be in \\[0, 1\\]"):
+            build_submission_evidence(
+                "frozen-generation",
+                candidate="learned-static-fusion",
+                expected_generation_revision=TRUSTED_GENERATION_REVISION,
+                expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+            )
 
     @patch("submission_evidence.read_static_fallback_generation")
     def test_error_analysis_is_source_unique_and_order_independent(self, reader):

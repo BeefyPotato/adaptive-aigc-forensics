@@ -63,6 +63,27 @@ def _finite_score(row, field):
     return float(value)
 
 
+def _unit_interval_rate(value, field):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence threshold {field} must be finite.")
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(f"Submission evidence threshold {field} must be in [0, 1].")
+    return result
+
+
+def _metrics_with_false_rates(metrics):
+    result = copy.deepcopy(metrics)
+    threshold = result.get("threshold_diagnostics")
+    if not isinstance(threshold, dict):
+        raise ValueError("Submission evidence threshold diagnostics are missing or invalid.")
+    sensitivity = _unit_interval_rate(threshold.get("sensitivity"), "sensitivity")
+    specificity = _unit_interval_rate(threshold.get("specificity"), "specificity")
+    threshold["false_positive_rate"] = 1.0 - specificity
+    threshold["false_negative_rate"] = 1.0 - sensitivity
+    return result
+
+
 def _representative_case(row, *, score_field, threshold_logit):
     source_id = row.get("source_id")
     variant_id = row.get("variant_id")
@@ -151,7 +172,8 @@ def build_from_rows(rows, *, candidate="learned-static-fusion", threshold_logit=
 
 
 def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, rows):
-    threshold = metrics.get("threshold_diagnostics", {}).get("threshold_logit")
+    evidence_metrics = _metrics_with_false_rates(metrics)
+    threshold = evidence_metrics["threshold_diagnostics"].get("threshold_logit")
     return {
         "schema_version": "submission-evidence-v1",
         "system_id": candidate,
@@ -165,7 +187,7 @@ def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, r
             "source_count": bundle["evaluation"]["source_count"],
             "observation_count": bundle["evaluation"]["observation_count"],
         },
-        "metrics": copy.deepcopy(metrics),
+        "metrics": evidence_metrics,
         "error_analysis": {
             "selection_rule": ERROR_RANKING_VERSION,
             "representative_cases": build_from_rows(
