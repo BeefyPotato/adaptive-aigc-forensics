@@ -114,12 +114,25 @@ def _metric(value, context):
     return f"{_finite(value, context, unit_interval=True):.6f}"
 
 
-def _markdown(value):
-    return html.escape(str(value), quote=True).replace("\\", "\\\\").replace("|", "\\|")
+def _single_line_text(value, context):
+    text = _text(value, context)
+    if "\r" in text or "\n" in text:
+        raise ValueError(f"{context} must be single-line text.")
+    return text
 
 
-def _svg_text(value):
-    return html.escape(str(value), quote=True)
+def _markdown_text(value, context):
+    text = html.escape(_single_line_text(value, context), quote=True)
+    for character in "\\`|[]*_~":
+        text = text.replace(character, f"\\{character}")
+    return text
+
+
+def _identifier(value, context):
+    identifier = _single_line_text(value, context)
+    if "/" in identifier or "\\" in identifier or ".." in identifier:
+        raise ValueError(f"{context} must not be path-like.")
+    return identifier
 
 
 def _read_completed_evidence(evidence_directory):
@@ -208,7 +221,7 @@ def _validated_metrics(metrics):
         raise ValueError("Submission evidence worst condition is invalid.")
     if worst["family"] not in FAMILIES or worst["family"] == "clean":
         raise ValueError("Submission evidence worst condition family is invalid.")
-    _text(worst["severity"], "Submission evidence worst condition severity")
+    _single_line_text(worst["severity"], "Submission evidence worst condition severity")
     _finite(worst["auroc"], "Submission evidence worst condition AUROC", unit_interval=True)
     threshold = metrics.get("threshold_diagnostics")
     required_threshold = {
@@ -233,13 +246,34 @@ def _validated_errors(error_analysis):
     if not isinstance(cases, dict) or set(cases) != set(ERROR_STRATA):
         raise ValueError("Submission evidence error cases are incomplete or unexpected.")
     required_case = {"source_id", "variant_id", "condition_family", "severity", "error_kind", "expert_agreement", "correction_status", "rank"}
+    correction_statuses = {
+        "signal-corrects-rgb-error", "rgb-corrects-signal-error",
+        "both-experts-correct", "both-experts-wrong",
+    }
     for stratum, case in cases.items():
         if case is None:
             continue
         if not isinstance(case, dict) or set(case) != required_case:
             raise ValueError("Submission evidence representative case is incomplete or unexpected.")
-        for field, value in case.items():
-            _text(value, f"Submission evidence representative case {field}")
+        _identifier(case["source_id"], "Submission evidence representative source ID")
+        _identifier(case["variant_id"], "Submission evidence representative variant ID")
+        if case["condition_family"] not in FAMILIES:
+            raise ValueError("Submission evidence representative condition family is invalid.")
+        _single_line_text(case["severity"], "Submission evidence representative severity")
+        expected_error_kind = "false-positive" if stratum.endswith("false-positive") else "false-negative"
+        if case["error_kind"] != expected_error_kind:
+            raise ValueError("Submission evidence representative error kind is invalid.")
+        if (stratum.startswith("clean-") and case["condition_family"] != "clean") or (
+            stratum.startswith("transformed-") and case["condition_family"] == "clean"
+        ):
+            raise ValueError("Submission evidence representative stratum is invalid.")
+        if case["expert_agreement"] not in {"agree", "disagree"}:
+            raise ValueError("Submission evidence representative expert agreement is invalid.")
+        if case["correction_status"] not in correction_statuses:
+            raise ValueError("Submission evidence representative correction status is invalid.")
+        rank = _text(case["rank"], "Submission evidence representative rank")
+        if len(rank) != 64 or any(character not in "0123456789abcdef" for character in rank):
+            raise ValueError("Submission evidence representative rank is invalid.")
     return cases
 
 
@@ -249,7 +283,7 @@ def _markdown_report(data):
     lines = [
         "# Robustness and errors", "",
         "## Clean versus transformed", "",
-        f"System: `{_markdown(data['system_id'])}`. This internal validation report is not an official organizer score.", "",
+        f"System: {_markdown_text(data['system_id'], 'Submission evidence system ID')}. This internal validation report is not an official organizer score.", "",
         "| Condition | AUROC |", "| --- | ---: |",
     ]
     labels = {"clean": "Clean", "jpeg": "JPEG", "blur": "Blur", "resize": "Resize", "noise": "Noise", "color": "Color", "crop": "Crop"}
@@ -265,7 +299,7 @@ def _markdown_report(data):
         f"| FPR | {_metric(threshold['false_positive_rate'], 'FPR')} |",
         f"| FNR | {_metric(threshold['false_negative_rate'], 'FNR')} |", "",
         "## Threshold trade-offs", "",
-        f"The weakest persisted family/severity is `{_markdown(metrics['worst_family_severity']['family'])}` / `{_markdown(metrics['worst_family_severity']['severity'])}` (AUROC {_metric(metrics['worst_family_severity']['auroc'], 'Worst-condition AUROC')}). At the persisted threshold {_finite(threshold['threshold_logit'], 'Threshold logit'):.6f}, the persisted FPR is {_metric(threshold['false_positive_rate'], 'FPR')} and FNR is {_metric(threshold['false_negative_rate'], 'FNR')}. This discussion is descriptive, not causal.", "",
+        f"The weakest persisted family/severity is {_markdown_text(metrics['worst_family_severity']['family'], 'Submission evidence worst condition family')} / {_markdown_text(metrics['worst_family_severity']['severity'], 'Submission evidence worst condition severity')} (AUROC {_metric(metrics['worst_family_severity']['auroc'], 'Worst-condition AUROC')}). The persisted threshold trade-off has balanced accuracy {_metric(threshold['balanced_accuracy'], 'Balanced accuracy')}, FPR {_metric(threshold['false_positive_rate'], 'FPR')}, and FNR {_metric(threshold['false_negative_rate'], 'FNR')}. This discussion is descriptive, not causal.", "",
         "## Error strata", "",
         "**False positives** and **False negatives** below are deterministic sanitized representatives from the frozen evaluation; they do not establish visual causes.", "",
     ]
@@ -279,12 +313,12 @@ def _markdown_report(data):
         lines += [
             "| Source | Variant | Family | Severity | Error | Expert agreement | Correction status |",
             "| --- | --- | --- | --- | --- | --- | --- |",
-            "| " + " | ".join(_markdown(case[field]) for field in (
+            "| " + " | ".join(_markdown_text(case[field], f"Submission evidence representative case {field}") for field in (
                 "source_id", "variant_id", "condition_family", "severity", "error_kind", "expert_agreement", "correction_status"
             )) + " |", "",
         ]
     lines += ["## Limitations", ""]
-    lines.extend(f"- {_markdown(value)}" for value in data["limitations"])
+    lines.extend(f"- {_markdown_text(value, 'Submission evidence limitation')}" for value in data["limitations"])
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -295,7 +329,7 @@ def _svg(data):
         value = _finite(families[family]["auroc"], f"{family} AUROC", unit_interval=True)
         y = 35 + index * 32
         bars.extend((
-            f'<text x="10" y="{y + 14}">{_svg_text(family)}</text>',
+            f'<text x="10" y="{y + 14}">{family}</text>',
             f'<rect x="105" y="{y}" width="{value * 360:.3f}" height="20" fill="#2563eb"/>',
             f'<text x="470" y="{y + 14}">{value:.6f}</text>',
         ))
