@@ -23,3 +23,7 @@ Downstream tickets remain ordered by their scientific dependencies, but no addit
 ## Completion status
 
 The `hackathon-v1` production run completed and passed a full source-pin/cache revalidation on 2026-08-31. Its frozen checkpoint revision is `signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e`. Issue #7 may therefore begin from this checkpoint under the freeze and partition rules above once Issue #6's reviewed branch is merged.
+
+# Issue #7 static fallback
+
+Issue #7 fits deterministic Platt calibrators and one constrained static RGB weight only on complete matched `fusion-training` observations. It compares raw/calibrated expert controls, transparent 50/50 calibrated-logit fusion, and the learned static fusion on identical matched internal-validation observations. The learned static fallback is selected only when it improves all-condition macro AUROC by at least 0.005, worsens Brier score by no more than 0.002, and has a positive lower bound in the deterministic source-bootstrap 95% interval; otherwise calibrated RGB-only is frozen. Neither expert nor signal normalization is updated.
