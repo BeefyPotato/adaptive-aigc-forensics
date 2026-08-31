@@ -24,7 +24,7 @@ The implementation uses PyTorch, torchvision, timm, NumPy, Pillow, safetensors, 
 
 ## Datasets and assets
 
-SID_Set is the controlled development source pool. Selection preserves source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, candidate selection, thresholds, or narrative selection. Dataset access and provenance constraints are documented in [data sources](../data-sources.md).
+SID_Set is the controlled development source pool. Selection preserves source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, any selection, weights, thresholds, templates, or narrative. Dataset access and provenance constraints are documented in [data sources](../data-sources.md).
 
 ## Robustness and error analysis
 

@@ -26,8 +26,11 @@ class SubmissionReadmeTests(unittest.TestCase):
             "--resolution 384 --device auto --batch-size 8",
             readme,
         )
-        self.assertIn('"image_path"', readme)
-        self.assertIn('"pred"', readme)
+        self.assertIn("JSON array", readme)
+        self.assertIn("exactly this per-image schema", readme)
+        self.assertIn('"image_path": "relative/path/to/image.png"', readme)
+        self.assertIn('"pred": 0.73', readme)
+        self.assertIn("finite probability in `[0, 1]`", readme)
         self.assertIn("## Setup", readme)
         self.assertIn("## Training, calibration, and reporting order", readme)
         self.assertIn("## Limitations and improvements", readme)
@@ -59,6 +62,7 @@ class SubmissionPackageTests(unittest.TestCase):
             self.assertIn(heading, devpost)
         self.assertIn("raw RGB-only", devpost)
         self.assertIn("internal validation", devpost)
+        self.assertIn("training, calibration, any selection, weights, thresholds, templates, or narrative", devpost)
         self.assertNotIn("0.677 / 0.323", devpost)
 
     def test_documented_rgb_flags_are_supported_by_cli_help(self) -> None:
@@ -92,6 +96,16 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("Human contribution record", ledger)
         self.assertIn("Bundle SHA-256", ledger)
         self.assertIn("Repeated-output SHA-256", ledger)
+        self.assertIn(
+            "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181",
+            ledger,
+        )
+        self.assertIn(
+            "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179",
+            ledger,
+        )
+        self.assertIn("9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2", ledger)
+        self.assertIn("claim-ledger-complete and human-reviewed", demo)
 
 
 if __name__ == "__main__":
