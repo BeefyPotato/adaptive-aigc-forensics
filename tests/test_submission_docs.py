@@ -1,19 +1,31 @@
-"""Public submission documentation contract tests.
-
-The agreed public seam is the repository's submission-facing Markdown: it
-identifies the fusion design and its JSON contract without presenting an
-unaccepted implementation command as the submitted system.
-"""
+"""Public submission documentation and acceptance-record contract tests."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CANONICAL_COMMAND = (
+    "python submission_inference_cli.py --image-dir <directory> "
+    "--bundle-dir artifacts/issue-7-fusion-v2 "
+    "--rgb-checkpoint <community-forensics-384.safetensors> "
+    "--signal-model <signal-model.json> --output predictions.json "
+    "--device auto --batch-size 8"
+)
+ISSUE10_COMMIT = "b8982dfb3400fa92fde65cc0ea6f2fe141a4b402"
+SIGNAL_PROFILE = "hackathon-v1"
+SIGNAL_CHECKPOINT_REVISION = (
+    "signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e"
+)
+SIGNAL_NORMALIZATION_REVISION = (
+    "signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80"
+)
 
 
 def _canonical_lf_bytes(path: Path) -> bytes:
@@ -23,13 +35,14 @@ def _canonical_lf_bytes(path: Path) -> bytes:
 
 
 class SubmissionReadmeTests(unittest.TestCase):
-    def test_readme_publishes_the_fusion_design_without_claiming_an_unaccepted_cli(self) -> None:
+    def test_readme_publishes_the_accepted_fusion_cli_and_contract(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("## Submission inference status", readme)
         self.assertIn("learned-static-fusion", readme)
         self.assertIn("0.677 RGB / 0.323 signal", readme)
-        self.assertIn("pending Issue #10 acceptance and final CLI binding", readme)
+        self.assertEqual(readme.count(CANONICAL_COMMAND), 1)
+        self.assertIn(ISSUE10_COMMIT, readme)
         self.assertIn("JSON array", readme)
         self.assertIn("exactly this per-image schema", readme)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
@@ -65,7 +78,14 @@ class SubmissionReadmeTests(unittest.TestCase):
             "23.18 seconds",
             "466,698,240 bytes",
             "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
-            "same-device smoke evidence, not independent Issue #10 acceptance",
+            "21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2",
+            "independently reviewed",
+            SIGNAL_PROFILE,
+            "8,064 training draws",
+            "400 validation sources",
+            "8,000 validation observations",
+            SIGNAL_CHECKPOINT_REVISION,
+            SIGNAL_NORMALIZATION_REVISION,
         ):
             self.assertIn(disclosure, readme)
         for command in (
@@ -77,6 +97,19 @@ class SubmissionReadmeTests(unittest.TestCase):
         ):
             self.assertIn(command, readme)
         self.assertNotIn("npm run verify", readme)
+
+    def test_publication_links_keep_only_human_actions_open(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+
+        for document in (readme, devpost, ledger):
+            self.assertIn("https://github.com/BeefyPotato/adaptive-aigc-forensics", document)
+            self.assertIn("HUMAN REQUIRED", document)
+            self.assertIn("YouTube", document)
+            self.assertIn("Devpost", document)
+        self.assertIn("make the repository public", readme)
+        self.assertIn("_Unassigned — do not infer_", ledger)
 
         devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
         for document in (readme, devpost):
@@ -113,20 +146,22 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("learned-static-fusion", devpost)
         self.assertIn("0.677 RGB / 0.323 signal", devpost)
         self.assertIn("cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5", devpost)
-        self.assertIn("pending Issue #10 acceptance and final CLI binding", devpost)
+        self.assertEqual(devpost.count(CANONICAL_COMMAND), 1)
+        self.assertIn(ISSUE10_COMMIT, devpost)
         self.assertIn("internal validation", devpost)
         self.assertIn("training, calibration, any selection, weights, thresholds, templates, or narrative", devpost)
         self.assertNotIn("current raw RGB-only candidate", devpost)
         self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", devpost)
 
-    def test_pending_fusion_interface_preserves_the_submission_output_contract(self) -> None:
+    def test_accepted_fusion_interface_preserves_the_submission_output_contract(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         for document in (readme, devpost, ledger):
             self.assertIn("learned-static-fusion", document)
-            self.assertIn("pending Issue #10 acceptance", document)
+            self.assertIn(CANONICAL_COMMAND, document)
+            self.assertIn(ISSUE10_COMMIT, document)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
         self.assertIn('`{ "image_path": string, "pred": number }`', devpost)
         self.assertIn("exactly `image_path` and `pred`", ledger)
@@ -144,14 +179,14 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("120-second", demo)
         self.assertIn("learned-static-fusion", demo)
         self.assertIn("0.677 RGB / 0.323 signal", demo)
-        self.assertIn("Do not record inference", demo)
+        self.assertIn(CANONICAL_COMMAND, demo)
         self.assertIn("internal validation", demo)
         self.assertIn("Human contribution record", ledger)
         self.assertIn("Bundle SHA-256", ledger)
         self.assertIn("Final accepted command", ledger)
         self.assertIn("Evidence generation revision", ledger)
         self.assertIn("Tracked report", ledger)
-        self.assertIn("pending Issue #10 acceptance", ledger)
+        self.assertIn("independently reviewed and accepted", ledger)
         self.assertIn(
             "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181",
             ledger,
@@ -165,7 +200,7 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b", ledger)
         self.assertIn("claim-ledger-complete and human-reviewed", demo)
 
-    def test_final_fusion_evidence_is_linked_and_bound_without_claiming_cli_acceptance(self) -> None:
+    def test_final_fusion_evidence_is_linked_and_bound_to_cli_acceptance(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
         demo = (ROOT / "docs" / "submission" / "demo-script.md").read_text(encoding="utf-8")
@@ -200,7 +235,7 @@ class SubmissionPackageTests(unittest.TestCase):
             "d84773233606bb6f32f3fd6d226155a80d1113ee87c166f3c34f1382190f3072",
         ):
             self.assertIn(binding, ledger)
-        self.assertIn("pending Issue #10 acceptance", ledger)
+        self.assertIn(ISSUE10_COMMIT, ledger)
         self.assertNotIn("Final evidence/report receipts | **pending", ledger)
 
     def test_public_evidence_bytes_receipts_metrics_and_ledger_agree(self) -> None:
@@ -303,23 +338,75 @@ class SubmissionPackageTests(unittest.TestCase):
             "evaluation.source_bootstrap_all_condition_macro_auroc_gain.upper",
         ):
             self.assertIn(complementary_path, ledger)
+        self.assertIn("trusted-bundle-only limitation", ledger)
 
         runtime = json.loads((ROOT / "docs/submission/runtime-smoke.json").read_text("utf-8"))
-        self.assertEqual(runtime["schema_version"], "submission-runtime-smoke-v1")
-        self.assertFalse(runtime["accepted_submission_cli"])
-        self.assertFalse(runtime["canonical_command"])
-        self.assertEqual(runtime["independent_review"], "pending")
-        self.assertEqual(runtime["profile"]["wall_seconds"], 23.18)
-        self.assertEqual(runtime["profile"]["peak_working_set_bytes"], 466_698_240)
+        self.assertEqual(runtime["schema_version"], "submission-runtime-acceptance-v1")
+        self.assertTrue(runtime["accepted_submission_cli"])
+        self.assertEqual(runtime["canonical_command"], CANONICAL_COMMAND)
+        self.assertEqual(runtime["independent_review"], "accepted")
+        self.assertEqual(runtime["issue10_commit"], ISSUE10_COMMIT)
+        for binding in ("generation_revision", "bundle_revision", "bundle_sha256"):
+            self.assertEqual(runtime["artifact_bindings"][binding], evidence["bindings"][binding])
+        self.assertEqual(runtime["artifact_bindings"]["signal_profile"], SIGNAL_PROFILE)
         self.assertEqual(
-            runtime["output_sha256"],
+            runtime["artifact_bindings"]["signal_checkpoint_revision"],
+            SIGNAL_CHECKPOINT_REVISION,
+        )
+        self.assertEqual(
+            runtime["artifact_bindings"]["signal_normalization_revision"],
+            SIGNAL_NORMALIZATION_REVISION,
+        )
+        fixture = runtime["runs"]["fixture"]
+        self.assertEqual(fixture["profile"]["wall_seconds"], 23.18)
+        self.assertEqual(fixture["profile"]["peak_working_set_bytes"], 466_698_240)
+        self.assertEqual(fixture["cpu_output_sha256"], fixture["auto_output_sha256"])
+        self.assertEqual(
+            fixture["cpu_output_sha256"],
             "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
         )
+        self.assertEqual(fixture["maximum_absolute_parity_delta"], 0)
+        sampled_real = runtime["runs"]["sampled_real"]
+        self.assertFalse(sampled_real["organizer_data"])
+        self.assertEqual(sampled_real["input_image_count"], 4)
+        self.assertEqual(sampled_real["maximum_absolute_parity_delta"], 0)
+        self.assertEqual(
+            sampled_real["output_sha256"],
+            "21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2",
+        )
+        expected_inputs = [
+            ("authentic/0002d5c6b40edcd4.jpg", 147_109, "238ac3d883867d9253b9f66953ccca969793b1644d08df53f907bf2c400c54c6"),
+            ("authentic/00032d5bb63c29eb.jpg", 136_504, "4a7a351d5fff74295074834efbdad92b53d41754ed2bde70a9e0f3871abc4a5b"),
+            ("full-synthetic/full_synthetic_000021.jpg", 173_637, "ed04d319ba8c9d4dd688393e2b10dbe0172deffc10f1ccb0d4387744384fa9b0"),
+            ("full-synthetic/full_synthetic_000022.jpg", 176_449, "4e287901a8ecb69f783223e05d59af141f3d69e92bc3b7bc2a06c9c73cca835d"),
+        ]
+        self.assertEqual(
+            [(item["image_path"], item["bytes"], item["sha256"]) for item in sampled_real["inputs"]],
+            expected_inputs,
+        )
         for runtime_path in (
-            "profile.wall_seconds", "profile.images_per_second", "profile.peak_working_set_bytes",
-            "accepted_submission_cli", "canonical_command", "output_sha256", "device_runs",
+            "runs.fixture.profile.wall_seconds", "runs.fixture.profile.images_per_second",
+            "runs.fixture.profile.peak_working_set_bytes", "accepted_submission_cli",
+            "canonical_command", "runs.fixture.cpu_output_sha256",
+            "runs.sampled_real.output_sha256", "runs.sampled_real.inputs",
         ):
             self.assertIn(runtime_path, ledger)
+
+    def test_canonical_cli_help_exposes_every_documented_option(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "submission_inference_cli.py"), "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for option in (
+            "--image-dir", "--bundle-dir", "--rgb-checkpoint", "--signal-model",
+            "--output", "--device", "--batch-size",
+        ):
+            self.assertIn(option, completed.stdout)
 
 
 if __name__ == "__main__":

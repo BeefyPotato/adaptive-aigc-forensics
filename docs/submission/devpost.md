@@ -8,7 +8,11 @@ AI-generated-image detectors can lose useful evidence after everyday JPEG recomp
 
 The 21,811,969-parameter RGB expert uses the immutable Community Forensics 384 checkpoint with RGB decoding, orientation correction, resizing, center cropping, and normalization. The signal expert applies a deterministic 26-value representation and a frozen 26→16→1 tanh MLP with 449 trainable scalar parameters to the same losslessly materialized observation. Both logits are calibrated, then learned static fusion combines them using **0.677 RGB / 0.323 signal**, fitted only on the source-disjoint fusion-training set.
 
-Static fusion uses one trust allocation for every condition. The per-image degradation gate remains a separate research component and is not part of this selected design. The final accepted interface must emit exactly `{ "image_path": string, "pred": number }`, where `pred` is finite and from 0 to 1; the portable command is pending Issue #10 acceptance and final CLI binding.
+Static fusion uses one trust allocation for every condition. The per-image degradation gate remains a separate research component and is not part of this selected design. The independently reviewed Issue #10 interface at commit `b8982dfb3400fa92fde65cc0ea6f2fe141a4b402` emits exactly `{ "image_path": string, "pred": number }`, where `pred` is finite and from 0 to 1:
+
+```shell
+python submission_inference_cli.py --image-dir <directory> --bundle-dir artifacts/issue-7-fusion-v2 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model <signal-model.json> --output predictions.json --device auto --batch-size 8
+```
 
 ## Development tools
 
@@ -16,7 +20,7 @@ Python runs model inference, signal processing, and contract tests. Node.js 22 p
 
 ## Models and APIs
 
-The RGB component uses Community Forensics 384 from OwensLab, revision `6076002bf0d9dd37537f965ee2f06f826c333b61`, with SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387`. The signal model is bound by SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5`. The selected static weight is bound to trusted generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181` and bundle SHA-256 `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2`. Both experts are frozen for submission inference.
+The RGB component uses Community Forensics 384 from OwensLab, revision `6076002bf0d9dd37537f965ee2f06f826c333b61`, with SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387`. The signal model is bound by SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5`, profile `hackathon-v1`, checkpoint revision `signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e`, and normalization revision `signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80`. That profile used 8,064 training draws and a development validation of 400 sources / 8,000 observations. The selected static weight is bound to trusted generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181` and bundle SHA-256 `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2`. Both experts are frozen for submission inference.
 
 ## Libraries and frameworks
 
@@ -54,11 +58,11 @@ The contribution is a provenance-conscious way to combine explicit low-level sig
 
 ## Impact and feasibility
 
-Both expert paths operate on one checksummed materialized observation, and the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. An implementation-authored same-device CPU smoke on two checked-in images took 23.18 seconds including startup/model validation, peaked at 466,698,240 working-set bytes, and produced the same output SHA-256 in explicit CPU and `auto` modes. This record is not independent Issue #10 acceptance. The accepted directory interface will produce a probability for review workflows, not an autonomous moderation or provenance decision; its exact command remains withheld until the acceptance gate passes.
+Both expert paths operate on one checksummed materialized observation, and the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. The independently reviewed same-device CPU acceptance run on two checked-in images took 23.18 seconds including startup/model validation, peaked at 466,698,240 working-set bytes, and produced byte-identical explicit CPU and `auto` outputs at SHA-256 `adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3`, with maximum parity delta 0. A preselected four-image SID_Set internal-validation sample repeated byte-identically at SHA-256 `21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2`, also with maximum parity delta 0. The accepted directory interface produces a probability for review workflows, not an autonomous moderation or provenance decision.
 
 ## Limitations and next steps
 
-Public Community Forensics metadata does not provide an image-level ledger proving every organizer demonstration image was absent from its upstream training. The organizer set remains evaluation-only and locally controlled training sources are overlap-checked. Learned static fusion does not adapt its trust per image, is not calibrated for deployment, and has no public organizer result. Final CLI acceptance remains a publication gate. Next steps include testing unseen generators and independently evaluating the organizer set without changing the selected system.
+Public Community Forensics metadata does not provide an image-level ledger proving every organizer demonstration image was absent from its upstream training. The organizer set remains evaluation-only and locally controlled training sources are overlap-checked. Learned static fusion does not adapt its trust per image, is not calibrated for deployment, and has no public organizer result. Next steps include testing unseen generators and independently evaluating the organizer set without changing the selected system.
 
 ## Team contributions
 
@@ -66,4 +70,8 @@ Human team confirmation is required before naming any contributor or assigning c
 
 ## Demo and repository
 
-The final learned-static-fusion command is pending Issue #10 acceptance and final CLI binding; do not substitute the RGB-expert diagnostic command. The repository README gives setup, data preparation, candidate-bound internal-validation evidence, and the required output schema. The [demo script](demo-script.md) is a 120-second recording plan. Before publishing a result, review the candidate-bound [claim ledger](claim-ledger.md).
+The repository README gives setup, data preparation, the accepted learned-static-fusion command, candidate-bound internal-validation evidence, and the required output schema. The [demo script](demo-script.md) is a 120-second recording plan. Before publishing a result, review the candidate-bound [claim ledger](claim-ledger.md).
+
+- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics — **HUMAN REQUIRED:** make the repository public and verify it while signed out.
+- YouTube demo URL: **HUMAN REQUIRED** after recording and upload.
+- Devpost project URL: **HUMAN REQUIRED** after submission publication.

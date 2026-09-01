@@ -1,11 +1,18 @@
 {
-  "accepted_submission_cli": false,
-  "batch_size": 2,
-  "canonical_command": false,
-  "device_runs": [
-    "cpu",
-    "auto-resolved-cpu"
-  ],
+  "accepted_submission_cli": true,
+  "artifact_bindings": {
+    "bundle_revision": "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179",
+    "bundle_sha256": "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2",
+    "generation_revision": "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181",
+    "rgb_checkpoint_revision": "6076002bf0d9dd37537f965ee2f06f826c333b61",
+    "rgb_checkpoint_sha256": "b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387",
+    "signal_checkpoint_revision": "signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e",
+    "signal_model_sha256": "cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5",
+    "signal_normalization_revision": "signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80",
+    "signal_profile": "hackathon-v1",
+    "static_weight_revision": "static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b"
+  },
+  "canonical_command": "python submission_inference_cli.py --image-dir <directory> --bundle-dir artifacts/issue-7-fusion-v2 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model <signal-model.json> --output predictions.json --device auto --batch-size 8",
   "environment": {
     "cuda_available": false,
     "numpy": "2.3.5",
@@ -17,15 +24,66 @@
     "safetensors": "0.6.2",
     "timm": "1.0.19"
   },
-  "independent_review": "pending",
-  "input_image_count": 2,
-  "issue10_commit": "ee73cd17d8b592f631063fa7bde72a5e5849b770",
-  "output_sha256": "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
-  "profile": {
-    "images_per_second": 0.086,
-    "peak_working_set_bytes": 466698240,
-    "wall_seconds": 23.18
+  "independent_review": "accepted",
+  "issue10_commit": "b8982dfb3400fa92fde65cc0ea6f2fe141a4b402",
+  "runs": {
+    "fixture": {
+      "auto_output_sha256": "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
+      "batch_size": 2,
+      "cpu_output_sha256": "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
+      "device_runs": [
+        "cpu",
+        "auto-resolved-cpu"
+      ],
+      "input_image_count": 2,
+      "maximum_absolute_parity_delta": 0,
+      "numeric_tolerance": 0.00001,
+      "parity_test_wall_seconds": 20.37,
+      "profile": {
+        "images_per_second": 0.086,
+        "peak_working_set_bytes": 466698240,
+        "wall_seconds": 23.18
+      },
+      "repeated_cpu_output_byte_identical": true
+    },
+    "sampled_real": {
+      "input_image_count": 4,
+      "inputs": [
+        {
+          "bytes": 147109,
+          "image_path": "authentic/0002d5c6b40edcd4.jpg",
+          "sha256": "238ac3d883867d9253b9f66953ccca969793b1644d08df53f907bf2c400c54c6"
+        },
+        {
+          "bytes": 136504,
+          "image_path": "authentic/00032d5bb63c29eb.jpg",
+          "sha256": "4a7a351d5fff74295074834efbdad92b53d41754ed2bde70a9e0f3871abc4a5b"
+        },
+        {
+          "bytes": 173637,
+          "image_path": "full-synthetic/full_synthetic_000021.jpg",
+          "sha256": "ed04d319ba8c9d4dd688393e2b10dbe0172deffc10f1ccb0d4387744384fa9b0"
+        },
+        {
+          "bytes": 176449,
+          "image_path": "full-synthetic/full_synthetic_000022.jpg",
+          "sha256": "4e287901a8ecb69f783223e05d59af141f3d69e92bc3b7bc2a06c9c73cca835d"
+        }
+      ],
+      "maximum_absolute_parity_delta": 0,
+      "numeric_tolerance": 0.00001,
+      "organizer_data": false,
+      "output_sha256": "21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2",
+      "repeated_cpu_output_byte_identical": true,
+      "selection": "Lexicographically first two filenames in each local SID_Set internal-validation authentic and full-synthetic directory, selected before scoring"
+    }
   },
-  "schema_version": "submission-runtime-smoke-v1",
-  "scope": "implementation-authored-same-device-smoke"
+  "schema_version": "submission-runtime-acceptance-v1",
+  "scope": "independently-reviewed-same-device-acceptance",
+  "signal_training": {
+    "profile": "hackathon-v1",
+    "training_draws": 8064,
+    "validation_observations": 8000,
+    "validation_sources": 400
+  }
 }
