@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 SHARED_EXPERT_GEOMETRY = {224: 256, 384: 440}
+SHARED_OBSERVATION_PREPROCESSING_VERSION = "shared-preprocessing-v1"
 
 
 def decode_shared_rgb(path: Path | str) -> np.ndarray:
