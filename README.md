@@ -156,16 +156,12 @@ The checked-in [runtime and parity record](docs/submission/runtime-smoke.json) c
 | Directory-to-JSON CLI | [`submission_inference_cli.py`](submission_inference_cli.py) |
 | Inference API and artifact validation | [`submission_inference.py`](submission_inference.py) |
 | Frozen first-party deployment package | [signal model](models/track5/signal-model.json), [fusion bundle](models/track5/static-fallback-bundle.json), [completion receipt](models/track5/static-fallback.complete.json) |
-| Written project description | [`docs/submission/devpost.md`](docs/submission/devpost.md) |
 | Candidate-bound evidence | [evidence JSON](docs/submission/evidence/submission-evidence.json), [evidence receipt](docs/submission/evidence/submission-evidence.complete.json) |
 | Robustness summary and error analysis | [Markdown report](docs/submission/results/robustness-and-errors.md), [clean-versus-transformed SVG](docs/submission/results/clean-vs-transformed.svg) |
 | Report integrity receipt | [`docs/submission/results/submission-report.complete.json`](docs/submission/results/submission-report.complete.json) |
-| Demo recording plan | [`docs/submission/demo-script.md`](docs/submission/demo-script.md) |
 | Libraries, datasets, models, and licenses | [`docs/submission/attributions.md`](docs/submission/attributions.md) |
 | Quantitative-claim provenance | [`docs/submission/claim-ledger.md`](docs/submission/claim-ledger.md) |
 | Runtime and parity record | [`docs/submission/runtime-smoke.json`](docs/submission/runtime-smoke.json) |
-
-The YouTube recording and published Devpost page are external publication outputs; the repository contains the Devpost draft and recording plan.
 
 ## Robustness evaluation
 

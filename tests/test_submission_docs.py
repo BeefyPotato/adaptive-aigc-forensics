@@ -265,13 +265,18 @@ class SubmissionReadmeTests(unittest.TestCase):
             "docs/submission/results/robustness-and-errors.md",
             "docs/submission/results/clean-vs-transformed.svg",
             "docs/submission/results/submission-report.complete.json",
-            "docs/submission/devpost.md",
-            "docs/submission/demo-script.md",
             "docs/submission/attributions.md",
             "docs/submission/claim-ledger.md",
             "docs/submission/runtime-smoke.json",
         ):
             self.assertIn(relative_path, readme)
+
+        for excluded_submission_draft in (
+            "docs/submission/devpost.md",
+            "docs/submission/demo-script.md",
+            "repository contains the Devpost draft and recording plan",
+        ):
+            self.assertNotIn(excluded_submission_draft, readme)
 
         for internal_phrase in (
             "Issue #",
