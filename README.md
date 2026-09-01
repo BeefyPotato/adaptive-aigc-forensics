@@ -6,11 +6,21 @@ The predictor accepts an image directory and writes a deterministic JSON file wi
 
 ## Architecture
 
-- **RGB expert:** the frozen 384-pixel Community Forensics model with 21,811,969 parameters. It supplies semantic and visual evidence from normalized RGB pixels.
+- **RGB expert:** the frozen Community Forensics ViT-S/16 384 checkpoint with 21,811,969 parameters. It supplies learned RGB evidence from normalized pixels.
 - **Signal expert:** a deterministic 26-value signal representation of frequency and residual statistics followed by a 26→16→1 tanh MLP with 449 trainable scalar parameters (416 + 16 + 16 + 1).
 - **Learned static fusion:** calibrated expert logits combined at **0.677 RGB / 0.323 signal**. The allocation is fixed for every image.
 
 Both experts process the same decoded, orientation-corrected RGB observation. The runtime verifies the model, normalization, preprocessing, calibrator, and fusion bindings before constructing either expert.
+
+### Why Community Forensics 384
+
+We selected the revision-pinned Community Forensics ViT-S/16 384 checkpoint because its upstream training directly targets cross-generator generalization. Park and Owens [trained the classifier end-to-end](https://arxiv.org/html/2411.04125v2) on a **5.4-million-image class-balanced corpus**: **2.7 million generated images** from **4,803 generator models**, paired with **2.7 million real images**. Their CVPR 2025 experiments associate broader generator diversity with stronger performance on unseen generator families. These are upstream selection findings, not results produced by this repository or guarantees for every new generator.
+
+The [official upstream evaluation](https://huggingface.co/datasets/OwensLab/CommunityForensics-Eval) reports that the 384-pixel model outperformed the 224-pixel model across its comprehensive benchmark. We therefore chose the higher-resolution release so inference retains its 384×384 input crop instead of using the separately trained 224×224 fallback; we do not claim that input resolution alone causes the performance difference. The exact 21,811,969-parameter footprint of our pinned checkpoint is practical for a two-expert pipeline, while leaving the complementary branch as a compact 449-scalar MLP. The upstream paper also evaluates JPEG compression and Gaussian blur, as well as resizing; the robustness results below are our separately labeled internal-validation measurements of the complete fused system.
+
+In this project the upstream checkpoint is frozen. It contributes learned RGB evidence, while the signal expert supplies explicit **FFT-energy, neighbouring-pixel, and residual statistics**. Learned static fusion combines their calibrated logits at the fixed **0.677 RGB / 0.323 signal** allocation for every image. This pairs a broad learned forensic prior with explicit low-level evidence without adding a second large image backbone.
+
+Generator diversity is not image-level proof of non-overlap. The public [Community Forensics dataset card](https://huggingface.co/datasets/OwensLab/CommunityForensics) does not provide a complete image-level training ledger, so organizer images remain evaluation-only and locally controlled training sources undergo exact and perceptual overlap checks. The residual provenance limitation and controls are recorded in [ADR 0001](docs/adr/0001-use-community-forensics-checkpoint-with-provenance-controls.md).
 
 ## Quick start: run inference
 

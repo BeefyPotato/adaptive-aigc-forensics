@@ -140,6 +140,35 @@ class SubmissionReadmeTests(unittest.TestCase):
         self.assertIn("## Reproduce the reported results", readme)
         self.assertIn("## Limitations and future work", readme)
 
+    def test_readme_explains_the_rgb_expert_selection_with_cited_evidence(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+        attributions = (ROOT / "docs/submission/attributions.md").read_text(encoding="utf-8")
+
+        for explanation in (
+            "### Why Community Forensics 384",
+            "ViT-S/16",
+            "trained the classifier end-to-end",
+            "5.4-million-image class-balanced corpus",
+            "2.7 million generated images",
+            "4,803 generator models",
+            "2.7 million real images",
+            "unseen generator families",
+            "384-pixel model outperformed the 224-pixel model",
+            "JPEG compression and Gaussian blur",
+            "FFT-energy, neighbouring-pixel, and residual statistics",
+            "not image-level proof of non-overlap",
+        ):
+            self.assertIn(explanation, readme)
+
+        paper_url = "https://arxiv.org/html/2411.04125v2"
+        dataset_url = "https://huggingface.co/datasets/OwensLab/CommunityForensics"
+        for document in (readme, ledger, attributions):
+            self.assertIn(paper_url, document)
+            self.assertIn(dataset_url, document)
+
+        self.assertNotIn("dynamic fusion", readme.lower())
+
     def test_readme_uses_domain_language_and_documents_compute_and_data_flow(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")

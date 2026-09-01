@@ -5,7 +5,7 @@ This page records dependency and asset provenance for the submission package. It
 | Asset or dependency | Project use | Recorded upstream license | Provenance / reference |
 | --- | --- | --- | --- |
 | SID_Set | Controlled development source pool | CC BY 4.0 (dataset card) | [Hugging Face dataset](https://huggingface.co/datasets/saberzl/SID_Set); pinned revision is recorded in `metadata/sid-set-candidate-pool-v1.json`. |
-| Community Forensics / OwensLab checkpoints | Frozen RGB expert | MIT | [Community Forensics](https://github.com/JeongsooP/Community-Forensics) and the pinned repos/revisions/checksums in `config/community-forensics-models.json`. |
+| Community Forensics / OwensLab checkpoints | Frozen RGB expert | MIT | [CVPR paper](https://arxiv.org/html/2411.04125v2), [upstream code](https://github.com/JeongsooP/Community-Forensics), [official dataset card](https://huggingface.co/datasets/OwensLab/CommunityForensics), and the pinned repositories, revisions, and checksums in `config/community-forensics-models.json`. |
 | PyTorch / torchvision | Tensor computation and image transforms | BSD-3-Clause | [PyTorch license](https://github.com/pytorch/pytorch/blob/main/LICENSE). |
 | timm | Community Forensics model construction | Apache-2.0 | [pytorch-image-models license](https://github.com/huggingface/pytorch-image-models/blob/main/LICENSE). |
 | NumPy | Numerical operations | BSD-3-Clause | [NumPy license](https://github.com/numpy/numpy/blob/main/LICENSE.txt). |
