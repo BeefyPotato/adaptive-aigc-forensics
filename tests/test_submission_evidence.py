@@ -384,6 +384,56 @@ class SubmissionEvidenceTests(unittest.TestCase):
                 self.assertEqual(representative["expert_agreement"], "agree")
 
     @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_uses_the_correct_rgb_expert_score_for_each_candidate(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        cases = (
+            (
+                "raw-rgb-only",
+                {"raw-rgb-only": 0.25, "calibrated-rgb-only": -0.25},
+                {
+                    "rgb_logit": 0.3,
+                    "rgb_calibrated_logit": -0.3,
+                    "signal_calibrated_logit": 0.3,
+                    "selected_fallback_logit": -0.3,
+                },
+            ),
+            (
+                "learned-static-fusion",
+                {"raw-rgb-only": -0.25, "calibrated-rgb-only": 0.25},
+                {
+                    "rgb_logit": -0.3,
+                    "rgb_calibrated_logit": 0.3,
+                    "signal_calibrated_logit": 0.3,
+                    "selected_fallback_logit": 0.3,
+                },
+            ),
+        )
+        for candidate, rgb_thresholds, scores in cases:
+            with self.subTest(candidate=candidate):
+                generation = completed_generation_fixture()
+                candidates = generation["bundle"]["evaluation"]["candidates"]
+                candidates[candidate]["threshold_diagnostics"]["threshold_logit"] = 0.25 if candidate == "raw-rgb-only" else 0.2
+                for expert_candidate, threshold in rgb_thresholds.items():
+                    candidates[expert_candidate]["threshold_diagnostics"]["threshold_logit"] = threshold
+                candidates["calibrated-signal-only"]["threshold_diagnostics"]["threshold_logit"] = 0.1
+                row = generation["calibrated_internal_validation_cache"]["records"][0]
+                row.update(authenticity_label=0, **scores)
+                reader.return_value = generation
+
+                evidence = build_submission_evidence(
+                    "frozen-generation",
+                    candidate=candidate,
+                    expected_generation_revision=TRUSTED_GENERATION_REVISION,
+                    expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+                )
+
+                representative = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
+                self.assertEqual(representative["variant_id"], row["variant_id"])
+                self.assertEqual(representative["expert_agreement"], "agree")
+                self.assertEqual(representative["correction_status"], "both-experts-wrong")
+
+    @patch("submission_evidence.read_static_fallback_generation")
     def test_evidence_rejects_missing_or_nonfinite_decision_thresholds(self, reader):
         from submission_evidence import build_submission_evidence
 
@@ -570,6 +620,69 @@ class SubmissionEvidenceTests(unittest.TestCase):
         cases = evidence["error_analysis"]["representative_cases"]
         self.assertIsNotNone(cases["clean-false-positive"])
         self.assertIsNone(cases["transformed-false-positive"])
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_selects_the_lowest_canonical_rank_among_independent_candidates(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        generation = completed_generation_fixture()
+        rows = [dict(row) for row in generation["calibrated_internal_validation_cache"]["records"]]
+        rows[0].update(
+            source_id="sid-set:independent-a",
+            variant_id="variant-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        rows.append(dict(
+            rows[0],
+            source_id="sid-set:independent-b",
+            variant_id="variant-v1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ))
+        generation["calibrated_internal_validation_cache"]["records"] = rows
+        reader.return_value = generation
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        reader.return_value = {
+            **generation,
+            "calibrated_internal_validation_cache": {"records": list(reversed(rows))},
+        }
+        reversed_evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+
+        def canonical_rank(source_id, variant_id):
+            return hashlib.sha256(json.dumps({
+                "ranking_version": "submission-error-hash-rank-v1",
+                "stratum": "clean-false-positive",
+                "source_id": source_id,
+                "variant_id": variant_id,
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+        lower_rank = canonical_rank(rows[0]["source_id"], rows[0]["variant_id"])
+        higher_rank = canonical_rank(rows[-1]["source_id"], rows[-1]["variant_id"])
+        self.assertEqual(
+            lower_rank,
+            "29d30972c2d43a1ae42ed28cbc28da02511ead25b840e4562aac2b624b67be15",
+        )
+        self.assertEqual(
+            higher_rank,
+            "41d64c6afecdc8947e3d8699f89daff859b5dcc962c16c8adaef1e2b7b98216c",
+        )
+        self.assertLess(lower_rank, higher_rank)
+        selected = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
+        self.assertEqual(selected["source_id"], rows[0]["source_id"])
+        self.assertEqual(selected["variant_id"], rows[0]["variant_id"])
+        self.assertEqual(selected["rank"], lower_rank)
+        self.assertTrue(all(case is not None for case in evidence["error_analysis"]["representative_cases"].values()))
+        self.assertEqual(
+            evidence["error_analysis"]["representative_cases"],
+            reversed_evidence["error_analysis"]["representative_cases"],
+        )
 
     @patch("submission_evidence.read_static_fallback_generation")
     def test_evidence_persists_internal_validation_limitations(self, reader):
