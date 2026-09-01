@@ -1,0 +1,748 @@
+"""Candidate-bound internal-validation evidence from a trusted frozen generation."""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import ctypes
+import errno
+import hashlib
+import json
+import math
+import os
+import re
+import shutil
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+from fusion_pipeline import read_static_fallback_generation
+
+
+CANDIDATE_SCORE_FIELDS = {
+    "raw-rgb-only": "rgb_logit",
+    "learned-static-fusion": "selected_fallback_logit",
+}
+ERROR_RANKING_VERSION = "submission-error-hash-rank-v1"
+ERROR_STRATA = (
+    "clean-false-positive",
+    "clean-false-negative",
+    "transformed-false-positive",
+    "transformed-false-negative",
+)
+LIMITATIONS = (
+    "Internal validation influenced candidate and threshold selection.",
+    "These results are not organizer, sealed, official, independent-test, or unbiased estimates.",
+    "Upstream checkpoint overlap cannot be disproven.",
+    "The weakest-condition/FPR/FNR discussion is descriptive, not causal.",
+)
+EVIDENCE_FILENAME = "submission-evidence.json"
+COMPLETION_FILENAME = "submission-evidence.complete.json"
+COMPLETION_SCHEMA_VERSION = "submission-evidence-completion-v1"
+EVIDENCE_GENERATION_PREFIX = "submission-evidence-generation-v1"
+PUBLIC_METRIC_FIELDS = (
+    "metric_schema_version",
+    "evaluation_split",
+    "clean_auroc",
+    "corruption_families",
+    "mean_corrupted_auroc",
+    "all_condition_macro_auroc",
+    "worst_family_severity",
+    "degradation_drop",
+    "degradation_retention",
+    "threshold_diagnostics",
+    "brier_score",
+    "condition_balanced_brier_score",
+)
+PUBLIC_THRESHOLD_FIELDS = (
+    "status",
+    "selection_rule",
+    "balanced_accuracy",
+    "sensitivity",
+    "specificity",
+    "false_positive_rate",
+    "false_negative_rate",
+)
+PUBLIC_FAMILY_SEVERITIES = {
+    "clean": ("clean",),
+    "jpeg": ("quality-30", "quality-50", "quality-70", "quality-90"),
+    "blur": ("sigma-0.5", "sigma-1", "sigma-2"),
+    "resize": ("factor-0.25", "factor-0.5"),
+    "noise": ("sigma-0.02", "sigma-0.05", "sigma-0.1"),
+    "color": (
+        "brightness-0.8", "brightness-1.2", "contrast-0.8", "contrast-1.2",
+        "saturation-0.8", "saturation-1.2",
+    ),
+    "crop": ("center-0.8",),
+}
+EXPERT_DECISION_SPECS = {
+    "raw-rgb-only": {
+        "rgb": ("rgb_logit", "raw-rgb-only"),
+        "signal": ("signal_calibrated_logit", "calibrated-signal-only"),
+    },
+    "learned-static-fusion": {
+        "rgb": ("rgb_calibrated_logit", "calibrated-rgb-only"),
+        "signal": ("signal_calibrated_logit", "calibrated-signal-only"),
+    },
+}
+SOURCE_ID_PATTERN = re.compile(r"sid-set:[A-Za-z0-9_-]+\Z")
+VARIANT_ID_PATTERN = re.compile(r"variant-v1-[0-9a-f]{64}\Z")
+_AT_FDCWD_LINUX = -100
+_AT_FDCWD_DARWIN = -2
+_RENAME_NOREPLACE = 1
+_RENAME_EXCL = 4
+
+
+def _canonical_bytes(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _artifact_bytes(value):
+    try:
+        return (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("Submission evidence must be finite JSON.") from error
+
+
+def _finite_score(row, field):
+    value = row.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Internal-validation row requires finite {field}.")
+    return float(value)
+
+
+def _unit_interval_rate(value, field):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence threshold {field} must be finite.")
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        raise ValueError(f"Submission evidence threshold {field} must be in [0, 1].")
+    return result
+
+
+def _finite_metric(value, context, *, unit_interval=False, nonnegative=False):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence {context} must be finite.")
+    result = float(value)
+    if unit_interval and not 0.0 <= result <= 1.0:
+        raise ValueError(f"Submission evidence {context} must be in [0, 1].")
+    if nonnegative and result < 0.0:
+        raise ValueError(f"Submission evidence {context} must be nonnegative.")
+    return result
+
+
+def _metrics_with_false_rates(metrics):
+    result = copy.deepcopy(metrics)
+    threshold = result.get("threshold_diagnostics")
+    if not isinstance(threshold, dict):
+        raise ValueError("Submission evidence threshold diagnostics are missing or invalid.")
+    sensitivity = _unit_interval_rate(threshold.get("sensitivity"), "sensitivity")
+    specificity = _unit_interval_rate(threshold.get("specificity"), "specificity")
+    threshold["false_positive_rate"] = 1.0 - specificity
+    threshold["false_negative_rate"] = 1.0 - sensitivity
+    return result
+
+
+def _reject_public_logit_fields(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Submission evidence public metrics contain a non-string field.")
+            if "logit" in key.lower():
+                raise ValueError("Submission evidence public metrics must not contain logits.")
+            _reject_public_logit_fields(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_public_logit_fields(child)
+
+
+def _public_families(value):
+    if not isinstance(value, dict) or set(value) != set(PUBLIC_FAMILY_SEVERITIES):
+        raise ValueError("Submission evidence corruption families are incomplete or unexpected.")
+    public = {}
+    for family, severities in PUBLIC_FAMILY_SEVERITIES.items():
+        entry = value[family]
+        if not isinstance(entry, dict) or set(entry) != {"auroc", "auroc_by_severity"}:
+            raise ValueError("Submission evidence corruption family is invalid.")
+        by_severity = entry["auroc_by_severity"]
+        if not isinstance(by_severity, dict) or set(by_severity) != set(severities):
+            raise ValueError("Submission evidence corruption family severities are invalid.")
+        public[family] = {
+            "auroc": _finite_metric(entry["auroc"], f"{family} AUROC", unit_interval=True),
+            "auroc_by_severity": {
+                severity: _finite_metric(
+                    by_severity[severity], f"{family}/{severity} AUROC", unit_interval=True,
+                )
+                for severity in severities
+            },
+        }
+    return public
+
+
+def _public_worst_family_severity(value, families):
+    if not isinstance(value, dict) or set(value) != {"family", "severity", "auroc"}:
+        raise ValueError("Submission evidence worst family/severity is invalid.")
+    family = value["family"]
+    severity = value["severity"]
+    if family not in PUBLIC_FAMILY_SEVERITIES or family == "clean" or severity not in PUBLIC_FAMILY_SEVERITIES[family]:
+        raise ValueError("Submission evidence worst family/severity is incompatible.")
+    auroc = _finite_metric(value["auroc"], "worst family/severity AUROC", unit_interval=True)
+    if auroc != families[family]["auroc_by_severity"][severity]:
+        raise ValueError("Submission evidence worst family/severity AUROC is incompatible.")
+    return {"family": family, "severity": severity, "auroc": auroc}
+
+
+def _public_threshold(value):
+    if not isinstance(value, dict) or set(value) != set(PUBLIC_THRESHOLD_FIELDS) | {"threshold_logit"}:
+        raise ValueError("Submission evidence public threshold diagnostics are incomplete or unexpected.")
+    if value["status"] != "provisional-internal-validation-only" or value["selection_rule"] != "maximum-youden-j":
+        raise ValueError("Submission evidence public threshold diagnostics are incompatible.")
+    return {
+        "status": value["status"],
+        "selection_rule": value["selection_rule"],
+        **{
+            field: _finite_metric(value[field], field, unit_interval=True)
+            for field in (
+                "balanced_accuracy", "sensitivity", "specificity",
+                "false_positive_rate", "false_negative_rate",
+            )
+        },
+    }
+
+
+def _public_metrics(metrics):
+    if not isinstance(metrics, dict):
+        raise ValueError("Submission evidence candidate metrics are invalid.")
+    try:
+        if set(metrics) != set(PUBLIC_METRIC_FIELDS):
+            raise KeyError
+        families = _public_families(metrics["corruption_families"])
+        public = {
+            "metric_schema_version": metrics["metric_schema_version"],
+            "evaluation_split": metrics["evaluation_split"],
+            "clean_auroc": _finite_metric(metrics["clean_auroc"], "clean AUROC", unit_interval=True),
+            "corruption_families": families,
+            "mean_corrupted_auroc": _finite_metric(metrics["mean_corrupted_auroc"], "mean corrupted AUROC", unit_interval=True),
+            "all_condition_macro_auroc": _finite_metric(metrics["all_condition_macro_auroc"], "macro AUROC", unit_interval=True),
+            "worst_family_severity": _public_worst_family_severity(metrics["worst_family_severity"], families),
+            "degradation_drop": _finite_metric(metrics["degradation_drop"], "degradation drop"),
+            "degradation_retention": _finite_metric(metrics["degradation_retention"], "degradation retention", nonnegative=True),
+            "threshold_diagnostics": _public_threshold(metrics["threshold_diagnostics"]),
+            "brier_score": _finite_metric(metrics["brier_score"], "Brier score", unit_interval=True),
+            "condition_balanced_brier_score": _finite_metric(metrics["condition_balanced_brier_score"], "condition-balanced Brier score", unit_interval=True),
+        }
+    except (KeyError, TypeError) as error:
+        raise ValueError("Submission evidence candidate metrics are incomplete.") from error
+    if public["metric_schema_version"] != "fusion-candidate-metrics-v1" or public["evaluation_split"] != "internal-validation":
+        raise ValueError("Submission evidence candidate metrics are incompatible.")
+    _reject_public_logit_fields(public)
+    return public
+
+
+def _finite_threshold(value, context):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence {context} must be finite.")
+    return float(value)
+
+
+def _expert_decisions(bundle, candidate):
+    try:
+        specifications = EXPERT_DECISION_SPECS[candidate]
+        candidates = bundle["evaluation"]["candidates"]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Submission evidence expert decision semantics are unavailable.") from error
+    decisions = {}
+    for expert, (score_field, candidate_name) in specifications.items():
+        try:
+            threshold = candidates[candidate_name]["threshold_diagnostics"]["threshold_logit"]
+        except (KeyError, TypeError) as error:
+            raise ValueError(
+                f"Submission evidence {expert} decision threshold is unavailable."
+            ) from error
+        decisions[expert] = {
+            "score_field": score_field,
+            "threshold_logit": _finite_threshold(threshold, f"{expert} decision threshold"),
+        }
+    return decisions
+
+
+def _representative_case(row, *, score_field, threshold_logit, expert_decisions):
+    source_id = row.get("source_id")
+    variant_id = row.get("variant_id")
+    family = row.get("condition_family")
+    severity = row.get("severity")
+    label = row.get("authenticity_label")
+    if not isinstance(source_id, str) or SOURCE_ID_PATTERN.fullmatch(source_id) is None:
+        raise ValueError("Internal-validation row source ID is not canonical.")
+    if not isinstance(variant_id, str) or VARIANT_ID_PATTERN.fullmatch(variant_id) is None:
+        raise ValueError("Internal-validation row variant ID is not canonical.")
+    if (
+        not all(isinstance(value, str) and value for value in (family, severity))
+        or type(label) is not int
+        or label not in (0, 1)
+    ):
+        raise ValueError("Internal-validation rows have incompatible identity or label fields.")
+    predicted_ai = _finite_score(row, score_field) >= threshold_logit
+    if predicted_ai == bool(label):
+        return None
+    error_kind = "false-positive" if predicted_ai else "false-negative"
+    stratum = f"{'clean' if family == 'clean' else 'transformed'}-{error_kind}"
+    rank = hashlib.sha256(
+        _canonical_bytes(
+            {
+                "ranking_version": ERROR_RANKING_VERSION,
+                "stratum": stratum,
+                "source_id": source_id,
+                "variant_id": variant_id,
+            }
+        )
+    ).hexdigest()
+    rgb_prediction = (
+        _finite_score(row, expert_decisions["rgb"]["score_field"])
+        >= expert_decisions["rgb"]["threshold_logit"]
+    )
+    signal_prediction = (
+        _finite_score(row, expert_decisions["signal"]["score_field"])
+        >= expert_decisions["signal"]["threshold_logit"]
+    )
+    rgb_correct = rgb_prediction == bool(label)
+    signal_correct = signal_prediction == bool(label)
+    if not rgb_correct and signal_correct:
+        correction_status = "signal-corrects-rgb-error"
+    elif rgb_correct and not signal_correct:
+        correction_status = "rgb-corrects-signal-error"
+    elif rgb_correct:
+        correction_status = "both-experts-correct"
+    else:
+        correction_status = "both-experts-wrong"
+    return stratum, {
+        "source_id": source_id,
+        "variant_id": variant_id,
+        "condition_family": family,
+        "severity": severity,
+        "error_kind": error_kind,
+        "expert_agreement": "agree" if rgb_prediction == signal_prediction else "disagree",
+        "correction_status": correction_status,
+        "rank": rank,
+    }
+
+
+def _maximum_matching_size(candidates_by_stratum, strata, unavailable_sources):
+    matched_source_to_stratum = {}
+
+    def assign(stratum, visited_sources):
+        for case in candidates_by_stratum[stratum]:
+            source_id = case["source_id"]
+            if source_id in unavailable_sources or source_id in visited_sources:
+                continue
+            visited_sources.add(source_id)
+            previous = matched_source_to_stratum.get(source_id)
+            if previous is None or assign(previous, visited_sources):
+                matched_source_to_stratum[source_id] = stratum
+                return True
+        return False
+
+    return sum(assign(stratum, set()) for stratum in strata)
+
+
+def _maximum_cardinality_representatives(by_source):
+    candidates_by_stratum = {
+        stratum: sorted(
+            (case for (case_stratum, _), case in by_source.items() if case_stratum == stratum),
+            key=lambda case: case["rank"],
+        )
+        for stratum in ERROR_STRATA
+    }
+    maximum_cardinality = _maximum_matching_size(
+        candidates_by_stratum, ERROR_STRATA, set(),
+    )
+    selected_sources = set()
+    selected_count = 0
+    representatives = {}
+    for index, stratum in enumerate(ERROR_STRATA):
+        remaining = ERROR_STRATA[index + 1:]
+        representative = None
+        for case in candidates_by_stratum[stratum]:
+            source_id = case["source_id"]
+            if source_id in selected_sources:
+                continue
+            feasible_count = selected_count + 1 + _maximum_matching_size(
+                candidates_by_stratum, remaining, selected_sources | {source_id},
+            )
+            if feasible_count == maximum_cardinality:
+                representative = case
+                break
+        if representative is not None:
+            selected_sources.add(representative["source_id"])
+            selected_count += 1
+        elif (
+            selected_count
+            + _maximum_matching_size(candidates_by_stratum, remaining, selected_sources)
+            != maximum_cardinality
+        ):
+            raise ValueError("Submission evidence representative allocation is inconsistent.")
+        representatives[stratum] = representative
+    return representatives
+
+
+def build_from_rows(
+    rows,
+    *,
+    candidate="learned-static-fusion",
+    threshold_logit=0.0,
+    expert_decisions=None,
+):
+    """Allocate deterministic, globally source-unique sanitized error representatives."""
+    if candidate not in CANDIDATE_SCORE_FIELDS:
+        raise ValueError("Submission candidate must be raw-rgb-only or learned-static-fusion.")
+    if isinstance(threshold_logit, bool) or not isinstance(threshold_logit, (int, float)) or not math.isfinite(threshold_logit):
+        raise ValueError("Submission evidence threshold must be finite.")
+    if expert_decisions is None:
+        expert_decisions = {
+            "rgb": {"score_field": "rgb_calibrated_logit", "threshold_logit": 0.0},
+            "signal": {"score_field": "signal_calibrated_logit", "threshold_logit": 0.0},
+        }
+    by_source = {}
+    for row in rows:
+        result = _representative_case(
+            row,
+            score_field=CANDIDATE_SCORE_FIELDS[candidate],
+            threshold_logit=float(threshold_logit),
+            expert_decisions=expert_decisions,
+        )
+        if result is None:
+            continue
+        stratum, case = result
+        key = (stratum, case["source_id"])
+        if key not in by_source or case["rank"] < by_source[key]["rank"]:
+            by_source[key] = case
+    return _maximum_cardinality_representatives(by_source)
+
+
+def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, rows):
+    evidence_metrics = _metrics_with_false_rates(metrics)
+    threshold = evidence_metrics["threshold_diagnostics"].get("threshold_logit")
+    return {
+        "schema_version": "submission-evidence-v1",
+        "system_id": candidate,
+        "evaluation_scope": "internal-validation",
+        "bindings": {
+            "generation_revision": completion["generation_revision"],
+            "bundle_revision": completion["bundle_revision"],
+            "bundle_sha256": completion["bundle_sha256"],
+        },
+        "evaluation": {
+            "source_count": bundle["evaluation"]["source_count"],
+            "observation_count": bundle["evaluation"]["observation_count"],
+        },
+        "metrics": _public_metrics(evidence_metrics),
+        "error_analysis": {
+            "selection_rule": ERROR_RANKING_VERSION,
+            "representative_cases": build_from_rows(
+                rows,
+                candidate=candidate,
+                threshold_logit=threshold,
+                expert_decisions=_expert_decisions(bundle, candidate),
+            ),
+        },
+        "limitations": list(LIMITATIONS),
+    }
+
+
+def build_submission_evidence(
+    generation_directory,
+    *,
+    candidate,
+    expected_generation_revision,
+    expected_bundle_sha256,
+):
+    """Build public aggregate evidence after validating the frozen input generation."""
+    if candidate not in CANDIDATE_SCORE_FIELDS:
+        raise ValueError(
+            "Submission candidate must be raw-rgb-only or learned-static-fusion."
+        )
+    generation = read_static_fallback_generation(
+        generation_directory,
+        expected_generation_revision=expected_generation_revision,
+    )
+    completion = generation["completion"]
+    if completion["bundle_sha256"] != expected_bundle_sha256:
+        raise ValueError("Submission evidence bundle SHA-256 is incompatible.")
+    bundle = generation["bundle"]
+    return _evidence_from_validated_inputs(
+        completion=completion,
+        bundle=bundle,
+        candidate=candidate,
+        metrics=bundle["evaluation"]["candidates"][candidate],
+        rows=generation["calibrated_internal_validation_cache"]["records"],
+    )
+
+
+def _ordinary_directory(path, context):
+    root = Path(path).absolute()
+    try:
+        metadata = root.lstat()
+        resolved = root.resolve(strict=True)
+    except OSError as error:
+        raise ValueError(f"{context} is missing or unreadable.") from error
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if (
+        resolved != root
+        or not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or bool(getattr(metadata, "st_file_attributes", 0) & reparse)
+    ):
+        raise ValueError(f"{context} is redirected or invalid.")
+    return root
+
+
+def _validate_cli_generation_component(path):
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ValueError("Submission evidence generation path component is unreadable.") from error
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & reparse):
+        raise ValueError("Submission evidence generation path component is redirected or invalid.")
+
+
+def normalize_cli_generation_directory(path, *, component_validator=None):
+    """Lexically normalize a CLI path only after checking its original components."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        current = Path(candidate.anchor)
+        components = candidate.parts[1:]
+    else:
+        current = Path.cwd()
+        components = candidate.parts
+    validator = component_validator or _validate_cli_generation_component
+    validator(current)
+    for component in components:
+        if component in ("", "."):
+            continue
+        if component == "..":
+            current = current.parent
+        else:
+            current = current / component
+        validator(current)
+    return current
+
+
+def _exact_inventory(root, expected, context):
+    try:
+        entries = list(root.iterdir())
+    except OSError as error:
+        raise ValueError(f"{context} cannot be read.") from error
+    if {entry.name for entry in entries} != expected:
+        raise ValueError(f"{context} inventory is incomplete or unexpected.")
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    for entry in entries:
+        try:
+            metadata = entry.lstat()
+        except OSError as error:
+            raise ValueError(f"{context} contains an unreadable entry.") from error
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or bool(getattr(metadata, "st_file_attributes", 0) & reparse)
+        ):
+            raise ValueError(f"{context} contains a redirected or invalid entry.")
+
+
+def _atomic_write(path, contents):
+    descriptor = None
+    temporary = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent,
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = None
+            handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _unsupported_rename(source, target):
+    error_number = getattr(errno, "ENOTSUP", errno.EINVAL)
+    return OSError(error_number, "Atomic no-replace directory rename is unsupported on this platform.", str(source), str(target))
+
+
+def _rename_directory_no_replace(source, target):
+    if os.name == "nt":
+        os.rename(source, target)
+        return
+    if sys.platform.startswith(("freebsd", "openbsd", "netbsd")):
+        raise _unsupported_rename(source, target)
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError as error:
+        raise _unsupported_rename(source, target) from error
+    encoded_source = os.fsencode(source)
+    encoded_target = os.fsencode(target)
+    if sys.platform.startswith("linux"):
+        try:
+            renameat2 = libc.renameat2
+        except AttributeError as error:
+            raise _unsupported_rename(source, target) from error
+        renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+        renameat2.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        if renameat2(getattr(os, "AT_FDCWD", _AT_FDCWD_LINUX), encoded_source, getattr(os, "AT_FDCWD", _AT_FDCWD_LINUX), encoded_target, _RENAME_NOREPLACE) != 0:
+            error_number = ctypes.get_errno() or errno.EIO
+            raise OSError(error_number, os.strerror(error_number), str(source), str(target))
+        return
+    if sys.platform == "darwin":
+        try:
+            renamex_np = libc.renamex_np
+        except AttributeError:
+            renamex_np = None
+        if renamex_np is not None:
+            renamex_np.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+            renamex_np.restype = ctypes.c_int
+            ctypes.set_errno(0)
+            if renamex_np(encoded_source, encoded_target, _RENAME_EXCL) == 0:
+                return
+        raise _unsupported_rename(source, target)
+    raise _unsupported_rename(source, target)
+
+
+def _completion(evidence, evidence_bytes):
+    bindings = evidence["bindings"]
+    marker = {
+        "completion_schema_version": COMPLETION_SCHEMA_VERSION,
+        "generation_revision": bindings["generation_revision"],
+        "bundle_revision": bindings["bundle_revision"],
+        "bundle_sha256": bindings["bundle_sha256"],
+        "system_id": evidence["system_id"],
+        "evidence_sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+    }
+    marker["evidence_generation_revision"] = (
+        f"{EVIDENCE_GENERATION_PREFIX}-{hashlib.sha256(_canonical_bytes(marker)).hexdigest()}"
+    )
+    return marker
+
+
+def _validate_completed_output(root, evidence_bytes, expected_completion, context):
+    _ordinary_directory(root, context)
+    _exact_inventory(root, {EVIDENCE_FILENAME, COMPLETION_FILENAME}, context)
+    try:
+        persisted_evidence = (root / EVIDENCE_FILENAME).read_bytes()
+        completion_bytes = (root / COMPLETION_FILENAME).read_bytes()
+        completion = json.loads(completion_bytes)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"{context} completion marker is invalid.") from error
+    if persisted_evidence != evidence_bytes:
+        raise ValueError(f"{context} file {EVIDENCE_FILENAME} is stale or mismatched.")
+    if completion_bytes != _artifact_bytes(completion) or completion != expected_completion:
+        raise ValueError(f"{context} completion marker is stale or mismatched.")
+
+
+def _publish_directory(output_directory, evidence_bytes, completion):
+    target = Path(output_directory).absolute()
+    if target.exists() or target.is_symlink():
+        _validate_completed_output(target, evidence_bytes, completion, "Submission evidence directory")
+        return copy.deepcopy(completion)
+    parent = _ordinary_directory(target.parent, "Submission evidence directory parent")
+    if target.parent.absolute() != parent:
+        raise ValueError("Submission evidence directory path is redirected or invalid.")
+    staging = None
+    owned_identity = None
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=parent))
+        metadata = staging.lstat()
+        owned_identity = (metadata.st_dev, metadata.st_ino)
+        _atomic_write(staging / EVIDENCE_FILENAME, evidence_bytes)
+        _atomic_write(staging / COMPLETION_FILENAME, _artifact_bytes(completion))
+        _validate_completed_output(staging, evidence_bytes, completion, "Staged submission evidence directory")
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise ValueError("Submission evidence target cannot be checked before publication.") from error
+        else:
+            raise ValueError("Submission evidence target appeared before publication.")
+        _rename_directory_no_replace(staging, target)
+        _validate_completed_output(target, evidence_bytes, completion, "Submission evidence directory")
+    except BaseException:
+        if owned_identity is not None:
+            for candidate in (staging, target):
+                if candidate is None:
+                    continue
+                try:
+                    metadata = candidate.lstat()
+                except OSError:
+                    continue
+                if (
+                    (metadata.st_dev, metadata.st_ino) == owned_identity
+                    and stat.S_ISDIR(metadata.st_mode)
+                    and not stat.S_ISLNK(metadata.st_mode)
+                ):
+                    shutil.rmtree(candidate)
+                    break
+        raise
+    return copy.deepcopy(completion)
+
+
+def publish_submission_evidence(
+    generation_directory,
+    *,
+    candidate,
+    expected_generation_revision,
+    expected_bundle_sha256,
+    output_directory,
+):
+    """Atomically publish exact candidate-bound public evidence and its receipt."""
+    evidence = build_submission_evidence(
+        generation_directory,
+        candidate=candidate,
+        expected_generation_revision=expected_generation_revision,
+        expected_bundle_sha256=expected_bundle_sha256,
+    )
+    evidence_bytes = _artifact_bytes(evidence)
+    return _publish_directory(output_directory, evidence_bytes, _completion(evidence, evidence_bytes))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--generation-dir", required=True, type=Path)
+    parser.add_argument("--candidate", required=True, choices=sorted(CANDIDATE_SCORE_FIELDS))
+    parser.add_argument("--expected-generation-revision", required=True)
+    parser.add_argument("--expected-bundle-sha256", required=True)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    arguments = parser.parse_args(argv)
+    generation_directory = normalize_cli_generation_directory(arguments.generation_dir)
+    try:
+        completion = publish_submission_evidence(
+            generation_directory,
+            candidate=arguments.candidate,
+            expected_generation_revision=arguments.expected_generation_revision,
+            expected_bundle_sha256=arguments.expected_bundle_sha256,
+            output_directory=arguments.output_dir,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    print(json.dumps(completion, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

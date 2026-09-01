@@ -1,0 +1,11 @@
+{
+  "completion_schema_version": "submission-report-completion-v1",
+  "evidence_generation_revision": "submission-evidence-generation-v1-b018d8f0326f8a9ed9945b52eda2dadeae659b3827268af69c38aa4c09e27cc1",
+  "evidence_sha256": "0c3ed99c9805a4d455502f446637f33d784f541536bb1445b75ef83c6c767f90",
+  "files": {
+    "clean-vs-transformed.svg": "8163495995381f52fbccfd754cdb4c3aecfdd918949ee3d5fca0ad6c6fdef3f6",
+    "robustness-and-errors.md": "9ab6378752417637d6ae3e24443c5c49aff498fbdae11b01f82a1267bf6f486b"
+  },
+  "report_generation_revision": "submission-report-generation-v1-411d7380b4667552401f4f751472836d7d3186854f50694dff5039ce0c19e796",
+  "system_id": "learned-static-fusion"
+}
