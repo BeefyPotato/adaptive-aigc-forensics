@@ -152,6 +152,17 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("training, calibration, any selection, weights, thresholds, templates, or narrative", devpost)
         self.assertNotIn("current raw RGB-only candidate", devpost)
         self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", devpost)
+        self.assertNotIn("](attributions.md)", devpost)
+        self.assertNotIn("](../data-sources.md)", devpost)
+        self.assertNotIn("](claim-ledger.md)", devpost)
+        self.assertNotIn("](demo-script.md)", devpost)
+        for public_link in (
+            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/attributions.md",
+            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/data-sources.md",
+            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md",
+            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/demo-script.md",
+        ):
+            self.assertIn(public_link, devpost)
 
     def test_accepted_fusion_interface_preserves_the_submission_output_contract(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

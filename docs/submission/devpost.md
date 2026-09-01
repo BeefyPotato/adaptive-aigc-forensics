@@ -24,11 +24,11 @@ The RGB component uses Community Forensics 384 from OwensLab, revision `6076002b
 
 ## Libraries and frameworks
 
-The implementation uses PyTorch, torchvision, timm, NumPy, Pillow, safetensors, huggingface-hub, Node.js, and Sharp. Pinned versions appear in `requirements-rgb.txt`, `requirements-signal.txt`, and `package-lock.json`; attribution and license records are in [attributions](attributions.md).
+The implementation uses PyTorch, torchvision, timm, NumPy, Pillow, safetensors, huggingface-hub, Node.js, and Sharp. Pinned versions appear in `requirements-rgb.txt`, `requirements-signal.txt`, and `package-lock.json`; attribution and license records are in [attributions](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/attributions.md).
 
 ## Datasets and assets
 
-SID_Set is the controlled development source pool. The source-level allocation is 8,000 expert-training sources for signal fitting, 2,000 fusion-training sources for calibrators/static fusion, 2,000 internal-validation sources for development decisions, and 2,000 sealed-internal-test sources reserved for one-time internal reporting. Selection preserves class balance, source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, any selection, weights, thresholds, templates, or narrative. Dataset access and provenance constraints are documented in [data sources](../data-sources.md).
+SID_Set is the controlled development source pool. The source-level allocation is 8,000 expert-training sources for signal fitting, 2,000 fusion-training sources for calibrators/static fusion, 2,000 internal-validation sources for development decisions, and 2,000 sealed-internal-test sources reserved for one-time internal reporting. Selection preserves class balance, source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, any selection, weights, thresholds, templates, or narrative. Dataset access and provenance constraints are documented in [data sources](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/data-sources.md).
 
 ## Robustness and error analysis
 
@@ -46,7 +46,7 @@ The candidate-bound evidence at `docs/submission/evidence/submission-evidence.js
 | False-positive rate | 0.08399999999999996 |
 | False-negative rate | 0.16349999999999998 |
 
-These are candidate-bound development results, not sealed, independent-test, official, or organizer scores. The [claim ledger](claim-ledger.md) records the generation, bundle, manifest, expert, evidence, and report bindings.
+These are candidate-bound development results, not sealed, independent-test, official, or organizer scores. The [claim ledger](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md) records the generation, bundle, manifest, expert, evidence, and report bindings.
 
 At each candidate's provisional internal-validation threshold, the signal expert corrected **768/1218 = 0.6305418719211823** calibrated-RGB errors. Learned static fusion's all-condition macro-AUROC gain over calibrated RGB-only was **0.016795535714285936**, with deterministic source-bootstrap interval **[0.011076105794972707, 0.0234869800759804]**. This is descriptive complementary-value evidence on internal validation, not a causal, sealed, independent-test, or organizer claim.
 
@@ -66,11 +66,11 @@ Public Community Forensics metadata does not provide an image-level ledger provi
 
 ## Team contributions
 
-Human team confirmation is required before naming any contributor or assigning credit. The repository provides a role-based contribution-record template in the [claim ledger](claim-ledger.md); it deliberately contains no inferred names or unconfirmed assignments.
+Human team confirmation is required before naming any contributor or assigning credit. The repository provides a role-based contribution-record template in the [claim ledger](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md); it deliberately contains no inferred names or unconfirmed assignments.
 
 ## Demo and repository
 
-The repository README gives setup, data preparation, the accepted learned-static-fusion command, candidate-bound internal-validation evidence, and the required output schema. The [demo script](demo-script.md) is a 120-second recording plan. Before publishing a result, review the candidate-bound [claim ledger](claim-ledger.md).
+The repository README gives setup, data preparation, the accepted learned-static-fusion command, candidate-bound internal-validation evidence, and the required output schema. The [demo script](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/demo-script.md) is a 120-second recording plan. Before publishing a result, review the candidate-bound [claim ledger](https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md).
 
 - Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics — **HUMAN REQUIRED:** make the repository public and verify it while signed out.
 - YouTube demo URL: **HUMAN REQUIRED** after recording and upload.
