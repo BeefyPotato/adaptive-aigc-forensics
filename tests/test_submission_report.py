@@ -19,6 +19,15 @@ def _artifact_bytes(value):
     return (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
 
 
+def _representative_rank(stratum, source_id, variant_id):
+    return hashlib.sha256(_canonical_bytes({
+        "ranking_version": "submission-error-hash-rank-v1",
+        "stratum": stratum,
+        "source_id": source_id,
+        "variant_id": variant_id,
+    })).hexdigest()
+
+
 def evidence_fixture() -> dict:
     families = {
         "clean": {"auroc": 0.91, "auroc_by_severity": {"clean": 0.91}},
@@ -47,11 +56,13 @@ def evidence_fixture() -> dict:
             "mean_corrupted_auroc": 0.796,
             "all_condition_macro_auroc": 0.8122857142857143,
             "worst_family_severity": {"family": "noise", "severity": "sigma-0.1", "auroc": 0.77},
+            "degradation_drop": 0.114,
+            "degradation_retention": 0.875,
             "brier_score": 0.123456,
+            "condition_balanced_brier_score": 0.125,
             "threshold_diagnostics": {
                 "status": "provisional-internal-validation-only",
                 "selection_rule": "maximum-youden-j",
-                "threshold_logit": 0.125,
                 "balanced_accuracy": 0.75,
                 "sensitivity": 0.7,
                 "specificity": 0.8,
@@ -65,22 +76,30 @@ def evidence_fixture() -> dict:
                 "clean-false-positive": {
                     "source_id": "sid-set:source_clean_fp", "variant_id": "variant-v1-" + "1" * 64, "condition_family": "clean",
                     "severity": "clean", "error_kind": "false-positive", "expert_agreement": "agree",
-                    "correction_status": "both-experts-wrong", "rank": "1" * 64,
+                    "correction_status": "both-experts-wrong", "rank": _representative_rank(
+                        "clean-false-positive", "sid-set:source_clean_fp", "variant-v1-" + "1" * 64,
+                    ),
                 },
                 "clean-false-negative": {
                     "source_id": "sid-set:source_clean_fn", "variant_id": "variant-v1-" + "2" * 64, "condition_family": "clean",
                     "severity": "clean", "error_kind": "false-negative", "expert_agreement": "disagree",
-                    "correction_status": "signal-corrects-rgb-error", "rank": "2" * 64,
+                    "correction_status": "signal-corrects-rgb-error", "rank": _representative_rank(
+                        "clean-false-negative", "sid-set:source_clean_fn", "variant-v1-" + "2" * 64,
+                    ),
                 },
                 "transformed-false-positive": {
                     "source_id": "sid-set:source_transformed_fp", "variant_id": "variant-v1-" + "3" * 64, "condition_family": "noise",
                     "severity": "sigma-0.1", "error_kind": "false-positive", "expert_agreement": "agree",
-                    "correction_status": "both-experts-wrong", "rank": "3" * 64,
+                    "correction_status": "both-experts-wrong", "rank": _representative_rank(
+                        "transformed-false-positive", "sid-set:source_transformed_fp", "variant-v1-" + "3" * 64,
+                    ),
                 },
                 "transformed-false-negative": {
                     "source_id": "sid-set:source_transformed_fn", "variant_id": "variant-v1-" + "4" * 64, "condition_family": "noise",
                     "severity": "sigma-0.1", "error_kind": "false-negative", "expert_agreement": "disagree",
-                    "correction_status": "rgb-corrects-signal-error", "rank": "4" * 64,
+                    "correction_status": "rgb-corrects-signal-error", "rank": _representative_rank(
+                        "transformed-false-negative", "sid-set:source_transformed_fn", "variant-v1-" + "4" * 64,
+                    ),
                 },
             },
         },
@@ -153,17 +172,31 @@ class SubmissionReportTests(unittest.TestCase):
         case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
         case["source_id"] = "sid-set:full_synthetic_005849"
         case["variant_id"] = "variant-v1-" + "a" * 64
+        case["rank"] = _representative_rank(
+            "clean-false-positive", case["source_id"], case["variant_id"],
+        )
         self.reset_evidence(evidence)
         render_submission_report(self.evidence_dir, self.output_dir)
         markdown = (self.output_dir / "robustness-and-errors.md").read_text("utf-8")
         self.assertIn("sid-set:full\\_synthetic\\_005849", markdown)
+
+    def test_report_accepts_raw_rgb_only_system(self):
+        from submission_report import render_submission_report
+
+        evidence = copy.deepcopy(self.evidence)
+        evidence["system_id"] = "raw-rgb-only"
+        self.reset_evidence(evidence)
+        render_submission_report(self.evidence_dir, self.output_dir)
+        self.assertIn("System: raw-rgb-only", (self.output_dir / "clean-vs-transformed.svg").read_text("utf-8"))
 
     def test_svg_includes_persisted_summary_and_disclosure_annotations(self):
         from submission_report import render_submission_report
 
         render_submission_report(self.evidence_dir, self.output_dir)
         svg = (self.output_dir / "clean-vs-transformed.svg").read_text("utf-8")
+        self.assertIn("System: learned-static-fusion", svg)
         self.assertIn("Mean transformed AUROC: 0.796000", svg)
+        self.assertIn("All-condition macro AUROC: 0.812286", svg)
         self.assertIn("Worst condition: noise / sigma-0.1", svg)
         for limitation in self.evidence["limitations"]:
             self.assertIn(limitation, svg)
@@ -202,7 +235,10 @@ class SubmissionReportTests(unittest.TestCase):
         case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
         case["source_id"] = "sid-set:source_safe"
         case["variant_id"] = "variant-v1-" + "5" * 64
-        evidence["system_id"] = "system-<&>\"'`|[]*_"
+        case["rank"] = _representative_rank(
+            "clean-false-positive", case["source_id"], case["variant_id"],
+        )
+        case["severity"] = "severity-<&>\"'`|[]*_"
         self.reset_evidence(evidence)
         first = render_submission_report(self.evidence_dir, self.output_dir)
         first_bytes = {
@@ -213,8 +249,43 @@ class SubmissionReportTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first_bytes, {path.name: path.read_bytes() for path in self.output_dir.iterdir()})
         markdown = first_bytes["robustness-and-errors.md"].decode("utf-8")
-        self.assertIn("system-&lt;&amp;&gt;&quot;&#x27;\\`\\|\\[\\]\\*\\_", markdown)
-        self.assertNotIn("system-<&>", markdown)
+        self.assertIn("severity-&lt;&amp;&gt;&quot;&#x27;\\`\\|\\[\\]\\*\\_", markdown)
+        self.assertNotIn("severity-<&>", markdown)
+
+    def test_report_requires_exact_public_semantics_and_representative_ranks(self):
+        from submission_report import render_submission_report
+
+        mutations = {
+            "unsupported system": lambda value: value.__setitem__("system_id", "unsupported-candidate"),
+            "wrong metric schema": lambda value: value["metrics"].__setitem__("metric_schema_version", "other-v1"),
+            "wrong evaluation split": lambda value: value["metrics"].__setitem__("evaluation_split", "sealed-internal-test"),
+            "extra metric": lambda value: value["metrics"].__setitem__("unexpected", 1.0),
+            "missing metric": lambda value: value["metrics"].pop("condition_balanced_brier_score"),
+            "threshold logit": lambda value: value["metrics"]["threshold_diagnostics"].__setitem__("threshold_logit", 0.125),
+            "missing threshold rate": lambda value: value["metrics"]["threshold_diagnostics"].pop("false_negative_rate"),
+            "wrong threshold status": lambda value: value["metrics"]["threshold_diagnostics"].__setitem__("status", "official"),
+            "wrong threshold rule": lambda value: value["metrics"]["threshold_diagnostics"].__setitem__("selection_rule", "other-rule"),
+            "wrong error rule": lambda value: value["error_analysis"].__setitem__("selection_rule", "other-rule"),
+            "wrong correction status": lambda value: value["error_analysis"]["representative_cases"]["clean-false-positive"].__setitem__("correction_status", "unsupported"),
+            "false rank": lambda value: value["error_analysis"]["representative_cases"]["clean-false-positive"].__setitem__("rank", "0" * 64),
+            "duplicate source": lambda value: value["error_analysis"]["representative_cases"]["clean-false-negative"].__setitem__("source_id", value["error_analysis"]["representative_cases"]["clean-false-positive"]["source_id"]),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                evidence = copy.deepcopy(self.evidence)
+                mutate(evidence)
+                self.reset_evidence(evidence)
+                with self.assertRaises(ValueError):
+                    render_submission_report(self.evidence_dir, self.root / f"invalid-semantics-{name}")
+
+    def test_markdown_includes_verified_representative_rank(self):
+        from submission_report import render_submission_report
+
+        render_submission_report(self.evidence_dir, self.output_dir)
+        markdown = (self.output_dir / "robustness-and-errors.md").read_text("utf-8")
+        rank = self.evidence["error_analysis"]["representative_cases"]["clean-false-positive"]["rank"]
+        self.assertIn("| Source | Variant | Family | Severity | Error | Expert agreement | Correction status | Rank |", markdown)
+        self.assertIn(rank, markdown)
 
     def test_report_never_publishes_the_threshold_logit(self):
         from submission_report import render_submission_report

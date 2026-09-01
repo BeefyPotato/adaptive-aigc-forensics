@@ -24,6 +24,20 @@ REPORT_COMPLETION_FILENAME = "submission-report.complete.json"
 REPORT_COMPLETION_SCHEMA_VERSION = "submission-report-completion-v1"
 REPORT_GENERATION_PREFIX = "submission-report-generation-v1"
 FAMILIES = ("clean", "jpeg", "blur", "resize", "noise", "color", "crop")
+SYSTEM_IDS = ("raw-rgb-only", "learned-static-fusion")
+METRIC_FIELDS = {
+    "metric_schema_version", "evaluation_split", "clean_auroc", "corruption_families",
+    "mean_corrupted_auroc", "all_condition_macro_auroc", "worst_family_severity",
+    "degradation_drop", "degradation_retention", "threshold_diagnostics", "brier_score",
+    "condition_balanced_brier_score",
+}
+THRESHOLD_FIELDS = {
+    "status", "selection_rule", "balanced_accuracy", "sensitivity", "specificity",
+    "false_positive_rate", "false_negative_rate",
+}
+ERROR_RANKING_VERSION = "submission-error-hash-rank-v1"
+THRESHOLD_STATUS = "provisional-internal-validation-only"
+THRESHOLD_SELECTION_RULE = "maximum-youden-j"
 ERROR_STRATA = (
     "clean-false-positive",
     "clean-false-negative",
@@ -207,6 +221,8 @@ def _validated_evidence(evidence, completion):
     if evidence["schema_version"] != "submission-evidence-v1" or evidence["evaluation_scope"] != "internal-validation":
         raise ValueError("Submission evidence schema or evaluation scope is incompatible.")
     system_id = _text(evidence["system_id"], "Submission evidence system ID")
+    if system_id not in SYSTEM_IDS:
+        raise ValueError("Submission evidence system ID is incompatible.")
     if system_id != completion["system_id"]:
         raise ValueError("Submission evidence system ID is stale or mismatched.")
     bindings = evidence["bindings"]
@@ -229,10 +245,17 @@ def _validated_evidence(evidence, completion):
 
 
 def _validated_metrics(metrics):
-    if not isinstance(metrics, dict):
+    if not isinstance(metrics, dict) or set(metrics) != METRIC_FIELDS:
         raise ValueError("Submission evidence metrics are invalid.")
+    if metrics["metric_schema_version"] != "fusion-candidate-metrics-v1":
+        raise ValueError("Submission evidence metric schema is incompatible.")
+    if metrics["evaluation_split"] != "internal-validation":
+        raise ValueError("Submission evidence metric evaluation split is incompatible.")
     for field in ("clean_auroc", "mean_corrupted_auroc", "all_condition_macro_auroc", "brier_score"):
         _finite(metrics.get(field), f"Submission evidence {field}", unit_interval=True)
+    _finite(metrics["degradation_drop"], "Submission evidence degradation drop")
+    _finite(metrics["degradation_retention"], "Submission evidence degradation retention", unit_interval=True)
+    _finite(metrics["condition_balanced_brier_score"], "Submission evidence condition-balanced Brier score", unit_interval=True)
     families = metrics.get("corruption_families")
     if not isinstance(families, dict) or set(families) != set(FAMILIES):
         raise ValueError("Submission evidence corruption families are incomplete or unexpected.")
@@ -255,15 +278,12 @@ def _validated_metrics(metrics):
     _single_line_text(worst["severity"], "Submission evidence worst condition severity")
     _finite(worst["auroc"], "Submission evidence worst condition AUROC", unit_interval=True)
     threshold = metrics.get("threshold_diagnostics")
-    required_threshold = {
-        "status", "selection_rule", "threshold_logit", "balanced_accuracy", "sensitivity", "specificity",
-        "false_positive_rate", "false_negative_rate",
-    }
-    if not isinstance(threshold, dict) or not required_threshold <= set(threshold):
+    if not isinstance(threshold, dict) or set(threshold) != THRESHOLD_FIELDS:
         raise ValueError("Submission evidence threshold diagnostics are incomplete.")
-    _text(threshold["status"], "Submission evidence threshold status")
-    _text(threshold["selection_rule"], "Submission evidence threshold selection rule")
-    _finite(threshold["threshold_logit"], "Submission evidence threshold logit")
+    if threshold["status"] != THRESHOLD_STATUS:
+        raise ValueError("Submission evidence threshold status is incompatible.")
+    if threshold["selection_rule"] != THRESHOLD_SELECTION_RULE:
+        raise ValueError("Submission evidence threshold selection rule is incompatible.")
     for field in ("balanced_accuracy", "sensitivity", "specificity", "false_positive_rate", "false_negative_rate"):
         _finite(threshold[field], f"Submission evidence {field}", unit_interval=True)
     return metrics
@@ -272,7 +292,8 @@ def _validated_metrics(metrics):
 def _validated_errors(error_analysis):
     if not isinstance(error_analysis, dict) or set(error_analysis) != {"selection_rule", "representative_cases"}:
         raise ValueError("Submission evidence error analysis is incomplete or unexpected.")
-    _text(error_analysis["selection_rule"], "Submission evidence error selection rule")
+    if error_analysis["selection_rule"] != ERROR_RANKING_VERSION:
+        raise ValueError("Submission evidence error selection rule is incompatible.")
     cases = error_analysis["representative_cases"]
     if not isinstance(cases, dict) or set(cases) != set(ERROR_STRATA):
         raise ValueError("Submission evidence error cases are incomplete or unexpected.")
@@ -281,13 +302,17 @@ def _validated_errors(error_analysis):
         "signal-corrects-rgb-error", "rgb-corrects-signal-error",
         "both-experts-correct", "both-experts-wrong",
     }
+    seen_sources = set()
     for stratum, case in cases.items():
         if case is None:
             continue
         if not isinstance(case, dict) or set(case) != required_case:
             raise ValueError("Submission evidence representative case is incomplete or unexpected.")
-        _source_identifier(case["source_id"], "Submission evidence representative source ID")
-        _variant_identifier(case["variant_id"], "Submission evidence representative variant ID")
+        source_id = _source_identifier(case["source_id"], "Submission evidence representative source ID")
+        variant_id = _variant_identifier(case["variant_id"], "Submission evidence representative variant ID")
+        if source_id in seen_sources:
+            raise ValueError("Submission evidence representative source IDs must be globally unique.")
+        seen_sources.add(source_id)
         if case["condition_family"] not in FAMILIES:
             raise ValueError("Submission evidence representative condition family is invalid.")
         _single_line_text(case["severity"], "Submission evidence representative severity")
@@ -305,6 +330,14 @@ def _validated_errors(error_analysis):
         rank = _text(case["rank"], "Submission evidence representative rank")
         if len(rank) != 64 or any(character not in "0123456789abcdef" for character in rank):
             raise ValueError("Submission evidence representative rank is invalid.")
+        expected_rank = _sha256(_canonical_bytes({
+            "ranking_version": ERROR_RANKING_VERSION,
+            "stratum": stratum,
+            "source_id": source_id,
+            "variant_id": variant_id,
+        }))
+        if rank != expected_rank:
+            raise ValueError("Submission evidence representative rank is incompatible.")
     return cases
 
 
@@ -342,10 +375,10 @@ def _markdown_report(data):
             lines += ["No case in the frozen evaluation.", ""]
             continue
         lines += [
-            "| Source | Variant | Family | Severity | Error | Expert agreement | Correction status |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| Source | Variant | Family | Severity | Error | Expert agreement | Correction status | Rank |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
             "| " + " | ".join(_markdown_text(case[field], f"Submission evidence representative case {field}") for field in (
-                "source_id", "variant_id", "condition_family", "severity", "error_kind", "expert_agreement", "correction_status"
+                "source_id", "variant_id", "condition_family", "severity", "error_kind", "expert_agreement", "correction_status", "rank"
             )) + " |", "",
         ]
     lines += ["## Limitations", ""]
@@ -360,7 +393,7 @@ def _svg(data):
     bars = []
     for index, family in enumerate(FAMILIES):
         value = _finite(families[family]["auroc"], f"{family} AUROC", unit_interval=True)
-        y = 125 + index * 38
+        y = 145 + index * 38
         bars.extend((
             f'<text x="160" y="{y + 18}" text-anchor="end" font-family="sans-serif" font-size="14">{family}</text>',
             f'<rect x="170" y="{y}" width="{value * 600:.3f}" height="24" fill="#2563eb"/>',
@@ -373,12 +406,14 @@ def _svg(data):
         '<desc>Persisted internal-validation robustness values and limitations.</desc>',
         '<rect width="960" height="560" fill="#fff"/>',
         '<text x="20" y="30" font-family="sans-serif" font-size="20" font-weight="bold">Clean versus transformed AUROC</text>',
-        f'<text x="20" y="58" font-family="sans-serif" font-size="14">Mean transformed AUROC: {_metric(metrics["mean_corrupted_auroc"], "Mean transformed AUROC")}</text>',
-        f'<text x="20" y="82" font-family="sans-serif" font-size="14">Worst condition: {_svg_text(worst["family"], "Submission evidence worst condition family")} / {_svg_text(worst["severity"], "Submission evidence worst condition severity")} (AUROC {_metric(worst["auroc"], "Worst-condition AUROC")})</text>',
-        '<line x1="170" y1="410" x2="770" y2="410" stroke="#243746"/>',
+        f'<text x="20" y="56" font-family="sans-serif" font-size="14">System: {_svg_text(data["system_id"], "Submission evidence system ID")}</text>',
+        f'<text x="20" y="80" font-family="sans-serif" font-size="14">Mean transformed AUROC: {_metric(metrics["mean_corrupted_auroc"], "Mean transformed AUROC")}</text>',
+        f'<text x="20" y="104" font-family="sans-serif" font-size="14">All-condition macro AUROC: {_metric(metrics["all_condition_macro_auroc"], "Macro AUROC")}</text>',
+        f'<text x="20" y="128" font-family="sans-serif" font-size="14">Worst condition: {_svg_text(worst["family"], "Submission evidence worst condition family")} / {_svg_text(worst["severity"], "Submission evidence worst condition severity")} (AUROC {_metric(worst["auroc"], "Worst-condition AUROC")})</text>',
+        '<line x1="170" y1="430" x2="770" y2="430" stroke="#243746"/>',
         *bars,
-        '<text x="20" y="438" font-family="sans-serif" font-size="14" font-weight="bold">Limitations</text>',
-        *(f'<text x="20" y="{462 + index * 22}" font-family="sans-serif" font-size="11">{_svg_text(limitation, "Submission evidence limitation")}</text>' for index, limitation in enumerate(data["limitations"])),
+        '<text x="20" y="458" font-family="sans-serif" font-size="14" font-weight="bold">Limitations</text>',
+        *(f'<text x="20" y="{482 + index * 22}" font-family="sans-serif" font-size="11">{_svg_text(limitation, "Submission evidence limitation")}</text>' for index, limitation in enumerate(data["limitations"])),
         '</svg>',
     ]
     return ("\n".join(annotations) + "\n").encode("utf-8")
