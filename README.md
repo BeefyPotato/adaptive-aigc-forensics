@@ -1,5 +1,7 @@
 # Adaptive AIGC Forensics
 
+## Project overview
+
 Adaptive AIGC Forensics estimates whether an image is AI-generated while making robustness under JPEG recompression, blur, resizing, noise, color changes, and cropping explicit. The submitted system combines a frozen RGB expert with a compact signal expert through **learned-static-fusion**.
 
 The predictor accepts an image directory and writes a deterministic JSON file with one confidence score per image.
@@ -22,7 +24,7 @@ In this project the upstream checkpoint is frozen. It contributes learned RGB ev
 
 Generator diversity is not image-level proof of non-overlap. The public [Community Forensics dataset card](https://huggingface.co/datasets/OwensLab/CommunityForensics) does not provide a complete image-level training ledger, so organizer images remain evaluation-only and locally controlled training sources undergo exact and perceptual overlap checks. The residual provenance limitation and controls are recorded in [ADR 0001](docs/adr/0001-use-community-forensics-checkpoint-with-provenance-controls.md).
 
-## Quick start: run inference
+## Setup and installation
 
 ### Requirements
 
@@ -95,7 +97,7 @@ The package is bound to frozen generation `static-fallback-generation-v2-67220d1
 
 The bundle contains aggregate calibration, fusion, evaluation, and provenance bindings. It does not contain source images, image paths, labels, per-image predictions, or third-party checkpoint bytes.
 
-### 4. Run `submission_inference_cli.py`
+### 4. Run directory inference with `submission_inference_cli.py`
 
 Create an input directory and place supported images inside it. Nested directories are allowed.
 
@@ -143,25 +145,54 @@ The output is a JSON array whose records contain exactly `image_path` and `pred`
 ]
 ```
 
-`pred` is a finite probability in `[0, 1]` produced by learned static fusion. It is a model confidence, not a provenance verdict or an autonomous moderation decision. Detailed runtime behavior is documented in [submission inference](docs/submission-inference.md).
+`pred` is a finite probability in `[0, 1]`: it is the model's estimated probability that the image is AIGC-generated, with higher values indicating greater estimated likelihood. It is a model confidence, not a provenance verdict or an autonomous moderation decision. Detailed runtime behavior is documented in [submission inference](docs/submission-inference.md).
 
 ### Verified compute profile
 
 The checked-in [runtime and parity record](docs/submission/runtime-smoke.json) covers a CPU-only Windows 11 environment with Python 3.12.10 and PyTorch 2.8.0; CUDA was unavailable and `auto` resolved to CPU. For two checked-in images at batch size 2, the separately profiled process took **23.18 seconds** including startup, model loading, and artifact validation (**0.086 images/second**) with a peak observed working set of **466,698,240 bytes**. Explicit CPU and `auto` outputs were byte-identical. The frozen RGB expert was not retrained; the `hackathon-v1` signal-expert run was CPU-based.
 
-## Submission deliverables
+## Track 5 deliverables and repository map
 
-| Deliverable | Location |
+Public repository: [github.com/BeefyPotato/adaptive-aigc-forensics](https://github.com/BeefyPotato/adaptive-aigc-forensics)
+
+The solution is separated into focused components with module-level documentation, command-line entry points, contract tests, and linked implementation guides. The tables below map each Track 5 deliverable and solution responsibility to its location.
+
+### Submission deliverables
+
+| Track 5 deliverable | Location |
 | --- | --- |
-| Directory-to-JSON CLI | [`submission_inference_cli.py`](submission_inference_cli.py) |
-| Inference API and artifact validation | [`submission_inference.py`](submission_inference.py) |
-| Frozen first-party deployment package | [signal model](models/track5/signal-model.json), [fusion bundle](models/track5/static-fallback-bundle.json), [completion receipt](models/track5/static-fallback.complete.json) |
-| Candidate-bound evidence | [evidence JSON](docs/submission/evidence/submission-evidence.json), [evidence receipt](docs/submission/evidence/submission-evidence.complete.json) |
-| Robustness summary and error analysis | [Markdown report](docs/submission/results/robustness-and-errors.md), [clean-versus-transformed SVG](docs/submission/results/clean-vs-transformed.svg) |
+| Written project description | Devpost Project Story (external submission surface; not duplicated in this repository) |
+| Public code / GitHub repository | This [`README.md`](README.md), the directory inference [`submission_inference_cli.py`](submission_inference_cli.py), validated runtime [`submission_inference.py`](submission_inference.py), and deployable [`models/track5/`](models/track5/) package |
+| Demo video | Public YouTube video linked from Devpost (external submission surface; video and recording materials are not stored here) |
+| Robustness evaluation summary | [Clean-versus-transformed report](docs/submission/results/robustness-and-errors.md#clean-versus-transformed) and [SVG summary](docs/submission/results/clean-vs-transformed.svg) |
+| Error analysis note | [Representative false-positive/false-negative strata](docs/submission/results/robustness-and-errors.md#error-strata) and [threshold trade-offs](docs/submission/results/robustness-and-errors.md#threshold-trade-offs) |
+
+### Supporting reproducibility artifacts
+
+| Artifact | Repository location |
+| --- | --- |
+| Frozen first-party deployment package | [Signal model](models/track5/signal-model.json), [fusion bundle](models/track5/static-fallback-bundle.json), and [completion receipt](models/track5/static-fallback.complete.json) |
+| Revision-pinned RGB checkpoint metadata | [`config/community-forensics-models.json`](config/community-forensics-models.json) |
+| Candidate-bound evidence | [Evidence JSON](docs/submission/evidence/submission-evidence.json) and [evidence receipt](docs/submission/evidence/submission-evidence.complete.json) |
 | Report integrity receipt | [`docs/submission/results/submission-report.complete.json`](docs/submission/results/submission-report.complete.json) |
-| Libraries, datasets, models, and licenses | [`docs/submission/attributions.md`](docs/submission/attributions.md) |
+| Evidence and report generators | [`submission_evidence.py`](submission_evidence.py) and [`submission_report.py`](submission_report.py) |
+| Runtime, parity, and compute record | [`docs/submission/runtime-smoke.json`](docs/submission/runtime-smoke.json) |
+| Dataset, model, library, and license records | [`docs/submission/attributions.md`](docs/submission/attributions.md) |
 | Quantitative-claim provenance | [`docs/submission/claim-ledger.md`](docs/submission/claim-ledger.md) |
-| Runtime and parity record | [`docs/submission/runtime-smoke.json`](docs/submission/runtime-smoke.json) |
+
+### Solution code map
+
+| Component | Core implementation |
+| --- | --- |
+| Public directory inference | [`submission_inference_cli.py`](submission_inference_cli.py) and [`submission_inference.py`](submission_inference.py) |
+| Shared image decoding, geometry, and atomic publication | [`shared_observation.py`](shared_observation.py) and [`safe_output.py`](safe_output.py) |
+| Frozen RGB expert and baseline evaluation | [`rgb_expert.py`](rgb_expert.py) and [`rgb_baseline.py`](rgb_baseline.py) |
+| Signal representation, maps, and bounded training | [`signal_expert.py`](signal_expert.py), [`signal_maps.py`](signal_maps.py), and [`signal_pipeline.py`](signal_pipeline.py) |
+| Calibration and learned static fusion | [`fusion_pipeline.py`](fusion_pipeline.py) |
+| Source inventory, source-level splits, balancing, and leakage audit | [`src/source-inventory.js`](src/source-inventory.js), [`src/track5-manifest.js`](src/track5-manifest.js), [`src/balanced-sampler.js`](src/balanced-sampler.js), [`src/leakage-audit.js`](src/leakage-audit.js), and [`src/track5-pipeline.js`](src/track5-pipeline.js) |
+| Corruption definitions and deterministic materialization | [`src/track5-conditions.js`](src/track5-conditions.js), [`src/corruption-harness.js`](src/corruption-harness.js), [`src/materialized-observations.js`](src/materialized-observations.js), and [`scripts/materialize-track5-observations.mjs`](scripts/materialize-track5-observations.mjs) |
+| Submission evidence and report generation | [`submission_evidence.py`](submission_evidence.py) and [`submission_report.py`](submission_report.py) |
+| Reproducible environments and verification | [`requirements-rgb.txt`](requirements-rgb.txt), [`requirements-signal.txt`](requirements-signal.txt), [`package-lock.json`](package-lock.json), and [`tests/`](tests/) |
 
 ## Robustness evaluation
 

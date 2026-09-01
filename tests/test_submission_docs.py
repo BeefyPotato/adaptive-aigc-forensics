@@ -122,7 +122,9 @@ class SubmissionReadmeTests(unittest.TestCase):
     def test_readme_has_a_clean_clone_inference_quick_start(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## Quick start: run inference", readme)
+        self.assertIn("## Project overview", readme)
+        self.assertIn("## Setup and installation", readme)
+        self.assertIn("### 4. Run directory inference with `submission_inference_cli.py`", readme)
         self.assertIn("learned-static-fusion", readme)
         self.assertIn("0.677 RGB / 0.323 signal", readme)
         self.assertIn("git clone https://github.com/BeefyPotato/adaptive-aigc-forensics.git", readme)
@@ -137,6 +139,7 @@ class SubmissionReadmeTests(unittest.TestCase):
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
         self.assertIn('"pred": 0.73', readme)
         self.assertIn("finite probability in `[0, 1]`", readme)
+        self.assertIn("estimated probability that the image is AIGC-generated", readme)
         self.assertIn("## Reproduce the reported results", readme)
         self.assertIn("## Limitations and future work", readme)
 
@@ -250,13 +253,48 @@ class SubmissionReadmeTests(unittest.TestCase):
     def test_readme_is_public_facing_and_lists_submission_deliverables(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## Submission deliverables", readme)
+        self.assertIn("## Track 5 deliverables and repository map", readme)
+        self.assertIn("### Submission deliverables", readme)
+        self.assertIn("### Solution code map", readme)
+        self.assertIn("https://github.com/BeefyPotato/adaptive-aigc-forensics", readme)
+        for track5_deliverable in (
+            "Written project description",
+            "Public code / GitHub repository",
+            "Demo video",
+            "Robustness evaluation summary",
+            "Error analysis note",
+        ):
+            self.assertIn(track5_deliverable, readme)
         for relative_path in (
+            "README.md",
+            "requirements-rgb.txt",
+            "requirements-signal.txt",
+            "package-lock.json",
             "submission_inference_cli.py",
             "submission_inference.py",
+            "shared_observation.py",
+            "safe_output.py",
+            "rgb_expert.py",
+            "rgb_baseline.py",
+            "signal_expert.py",
+            "signal_pipeline.py",
+            "signal_maps.py",
+            "fusion_pipeline.py",
+            "src/source-inventory.js",
+            "src/track5-manifest.js",
+            "src/balanced-sampler.js",
+            "src/leakage-audit.js",
+            "src/track5-pipeline.js",
+            "src/track5-conditions.js",
+            "src/corruption-harness.js",
+            "src/materialized-observations.js",
+            "scripts/materialize-track5-observations.mjs",
+            "submission_evidence.py",
+            "submission_report.py",
             "models/track5/signal-model.json",
             "models/track5/static-fallback-bundle.json",
             "models/track5/static-fallback.complete.json",
+            "config/community-forensics-models.json",
             "docs/submission/evidence/submission-evidence.json",
             "docs/submission/evidence/submission-evidence.complete.json",
             "docs/submission/results/robustness-and-errors.md",
