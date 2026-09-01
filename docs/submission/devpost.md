@@ -2,13 +2,13 @@
 
 ## Problem and solution
 
-AI-generated-image detectors can lose useful evidence after everyday JPEG recompression, resizing, blur, noise, color adjustment, or cropping. Adaptive AIGC Forensics makes those transformations explicit through a reproducible corruption harness and source-disjoint development partitions. The current deadline-safe candidate is **raw RGB-only**: frozen Community Forensics 384 inference. It is not represented as an adaptive or fused system.
+AI-generated-image detectors can lose useful evidence after everyday JPEG recompression, resizing, blur, noise, color adjustment, or cropping. Adaptive AIGC Forensics makes those transformations explicit through a reproducible corruption harness and source-disjoint development partitions. The selected design is **learned-static-fusion**: a frozen Community Forensics 384 RGB expert and a frozen low-level signal expert contribute complementary evidence through one learned, condition-independent allocation.
 
 ## Technical implementation
 
-The current candidate uses the immutable Community Forensics 384 checkpoint, with RGB decoding, orientation correction, resizing, center cropping, normalization, and batched inference behind `rgb_cli.py`. Its emitted record is exactly `{ "image_path": string, "pred": number }`, where `pred` is a finite probability from 0 to 1.
+The RGB expert uses the immutable Community Forensics 384 checkpoint with RGB decoding, orientation correction, resizing, center cropping, and normalization. The signal expert applies a deterministic 26-value representation and a frozen MLP to the same losslessly materialized observation. Both logits are calibrated, then learned static fusion combines them using **0.677 RGB / 0.323 signal**, fitted only on the source-disjoint fusion-training set.
 
-The research architecture also includes a signal expert: a deterministic 26-value signal representation followed by a frozen MLP. Corruption variants are materialized losslessly before branch-specific preprocessing. These research components, including fusion and a degradation gate, are not claimed as part of the current candidate.
+Static fusion uses one trust allocation for every condition. The per-image degradation gate remains a separate research component and is not part of this selected design. The final accepted interface must emit exactly `{ "image_path": string, "pred": number }`, where `pred` is finite and from 0 to 1; the portable command is pending Issue #10 acceptance and final CLI binding.
 
 ## Development tools
 
@@ -16,7 +16,7 @@ Python runs model inference, signal processing, and contract tests. Node.js 22 p
 
 ## Models and APIs
 
-The candidate uses Community Forensics 384 from OwensLab at the revision and SHA-256 recorded in `config/community-forensics-models.json`. The checkpoint is frozen; no model weights are fine-tuned. The tool downloads through Hugging Face tooling when a local checkpoint is not supplied, then verifies the expected checkpoint checksum before PyTorch loads it.
+The RGB component uses Community Forensics 384 from OwensLab, revision `6076002bf0d9dd37537f965ee2f06f826c333b61`, with SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387`. The signal model is bound by SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5`. The selected static weight is bound to trusted generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181` and bundle SHA-256 `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2`. Both experts are frozen for submission inference.
 
 ## Libraries and frameworks
 
@@ -28,21 +28,35 @@ SID_Set is the controlled development source pool. Selection preserves source-le
 
 ## Robustness and error analysis
 
-The corruption harness reports clean performance and severity-averaged JPEG, blur, resize, RGB-noise, atomic-color, and center-crop families. Any number from this process is an **internal validation** result only when it names the raw-RGB candidate, materialized-manifest SHA-256, checkpoint SHA-256, output SHA-256, and generation revision. This public package intentionally publishes no unbound metric, error count, or organizer score.
+The candidate-bound evidence at `docs/submission/evidence/submission-evidence.json` and its completion receipt produce `docs/submission/results/robustness-and-errors.md` and `docs/submission/results/clean-vs-transformed.svg`. The report receipt binds every published file. On the source-disjoint **internal validation** set, learned-static-fusion records:
+
+| Metric | Value |
+| --- | ---: |
+| Clean AUROC | 0.981975 |
+| Mean transformed AUROC | 0.9567506944444445 |
+| All-condition macro AUROC | 0.9603541666666667 |
+| Weakest family / severity / AUROC | noise / sigma-0.1 / 0.810425 |
+| Brier score | 0.09982875909583232 |
+| Condition-balanced Brier score | 0.09680062702417022 |
+| Provisional-threshold balanced accuracy | 0.87625 |
+| False-positive rate | 0.08399999999999996 |
+| False-negative rate | 0.16349999999999998 |
+
+These are candidate-bound development results, not sealed, independent-test, official, or organizer scores. The [claim ledger](claim-ledger.md) records the generation, bundle, manifest, expert, evidence, and report bindings.
 
 For error analysis, inspect false positives and false negatives only within the source-disjoint internal validation set, recording the applicable corruption condition and provisional threshold. Do not use organizer labels to select examples or tune the candidate.
 
 ## Innovation and complementary value
 
-The contribution is a provenance-conscious way to compare explicit low-level signal evidence with a frozen RGB expert under the same lossless materialized observation and source-disjoint splits. Complementary value is a held-out correction claim, not a feature-importance claim. It remains a research question here, not a performance claim for the current raw RGB-only candidate.
+The contribution is a provenance-conscious way to combine explicit low-level signal evidence with a frozen RGB expert under the same lossless materialized observation and source-disjoint splits. Complementary value is evaluated through held-out corrections rather than treated as feature importance. The selected system uses learned static fusion; an adaptive degradation gate remains future research.
 
 ## Impact and feasibility
 
-The candidate is straightforward to reproduce from a directory of images using one portable Python command, while the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. The output is a probability for review workflows, not an autonomous moderation or provenance decision.
+Both expert paths operate on one checksummed materialized observation, and the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. The accepted directory interface will produce a probability for review workflows, not an autonomous moderation or provenance decision. Its exact command is withheld until the Issue #10 acceptance gate and repeat-output check pass.
 
 ## Limitations and next steps
 
-Public Community Forensics metadata does not provide an image-level ledger proving every organizer demonstration image was absent from its upstream training. The organizer set remains evaluation-only and locally controlled training sources are overlap-checked. The current candidate is not calibrated for deployment, does not adapt its trust per image, and has no public organizer result. Next steps are to freeze and review a candidate, report checksummed internal-validation artifacts, test unseen generators, and independently evaluate the organizer set without changing the candidate.
+Public Community Forensics metadata does not provide an image-level ledger proving every organizer demonstration image was absent from its upstream training. The organizer set remains evaluation-only and locally controlled training sources are overlap-checked. Learned static fusion does not adapt its trust per image, is not calibrated for deployment, and has no public organizer result. Final CLI acceptance remains a publication gate. Next steps include testing unseen generators and independently evaluating the organizer set without changing the selected system.
 
 ## Team contributions
 
@@ -50,10 +64,4 @@ Human team confirmation is required before naming any contributor or assigning c
 
 ## Demo and repository
 
-Run the current candidate with:
-
-```shell
-python rgb_cli.py --input-dir ./images --output ./predictions.json --resolution 384 --device auto --batch-size 8
-```
-
-The repository README gives setup, data preparation, reproducible internal-validation commands, and the output schema. The [demo script](demo-script.md) is a 120-second recording plan. Before publishing a result, fill and review the candidate-bound [claim ledger](claim-ledger.md).
+The final learned-static-fusion command is pending Issue #10 acceptance and final CLI binding; do not substitute the RGB-expert diagnostic command. The repository README gives setup, data preparation, candidate-bound internal-validation evidence, and the required output schema. The [demo script](demo-script.md) is a 120-second recording plan. Before publishing a result, review the candidate-bound [claim ledger](claim-ledger.md).
