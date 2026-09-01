@@ -44,6 +44,15 @@ This writes a deterministic `track5-manifest.json` and `track5-leakage-audit.jso
 
 Track 5 dataset locations, intended experiment roles, and organizer-set restrictions are documented in [docs/data-sources.md](docs/data-sources.md).
 
+The source-level selection allocates **8,000 expert-training sources**, **2,000 fusion-training sources**, **2,000 internal-validation sources**, and **2,000 sealed-internal-test sources**, balanced equally between authentic and synthetic images. Their roles do not overlap:
+
+| Partition | Role |
+| --- | --- |
+| Expert training | Fits signal normalization and the signal MLP weights. |
+| Fusion training | Fits the two expert calibrators and learned static weight without updating either expert. |
+| Internal validation | Supports checkpoint/candidate selection, provisional threshold diagnostics, and development-only reporting. The time-boxed public evidence uses a deterministic 400-source subset with all 20 conditions. |
+| Sealed internal test | Remains unavailable to model and threshold decisions and is reserved for one-time internal reporting. |
+
 ## RGB baseline
 
 The project uses the existing Community Forensics detector as a frozen RGB expert: the checkpoint is evaluated but never retrained. Issue #4 pins the official 384-pixel primary model and 224-pixel smoke fallback, verifies their checksums, and provides shared experiment/directory preprocessing plus label-free JSON inference. See [docs/rgb-expert.md](docs/rgb-expert.md).
@@ -66,8 +75,8 @@ This repository distinguishes three evidence scopes: the source-disjoint **inter
 
 The research architecture has two complementary evidence paths:
 
-- The **RGB expert** is the frozen Community Forensics 384 checkpoint. It decodes and normalizes RGB pixels and returns an AI-generated-image probability.
-- The **signal expert** is a deterministic 26-value signal representation plus a frozen MLP. It uses explicit low-level image statistics rather than a second learned RGB representation.
+- The **RGB expert** is the frozen Community Forensics 384 checkpoint with 21,811,969 parameters. It decodes and normalizes RGB pixels and returns an AI-generated-image probability.
+- The **signal expert** is a deterministic 26-value signal representation plus a frozen 26→16→1 tanh MLP with 449 trainable scalar parameters: 416 + 16 + 16 + 1 across input weights, hidden biases, output weights, and output bias. It uses explicit low-level image statistics rather than a second learned RGB representation.
 - **Learned static fusion** calibrates both expert logits and combines them with the fusion-training weights 0.677 RGB / 0.323 signal. The trusted weight is fixed across image conditions.
 - The **degradation gate** is an experimental research component and is not part of the learned-static-fusion design.
 
@@ -119,6 +128,8 @@ The learned-static-fusion design is bound to these trusted artifacts:
 
 The candidate-bound [submission evidence](docs/submission/evidence/submission-evidence.json) and its [completion receipt](docs/submission/evidence/submission-evidence.complete.json) produce the public [robustness and error report](docs/submission/results/robustness-and-errors.md), [clean-versus-transformed SVG](docs/submission/results/clean-vs-transformed.svg), and [report receipt](docs/submission/results/submission-report.complete.json). On the source-disjoint **internal validation** set, learned static fusion records clean AUROC 0.981975, mean transformed AUROC 0.9567506944444445, all-condition macro AUROC 0.9603541666666667, and its weakest persisted condition at noise / sigma-0.1 / AUROC 0.810425. These are development results, not an official organizer score.
 
+The strongest complementary-value result is also internal-validation-only: at each candidate's provisional threshold, the signal expert corrected **768/1218 = 0.6305418719211823** calibrated-RGB errors. Learned static fusion improved all-condition macro AUROC over calibrated RGB-only by **0.016795535714285936**, with a deterministic source-bootstrap interval of **[0.011076105794972707, 0.0234869800759804]**. This is descriptive held-out evidence, not a causal attribution, sealed result, or organizer result.
+
 The final portable directory-to-JSON command is **pending Issue #10 acceptance and final CLI binding**. Until that gate is supplied, `rgb_cli.py` is an RGB-expert component diagnostic and must not be presented as the learned-static-fusion submission system. The accepted command must emit a JSON array, sorted by stable relative image path, with exactly this per-image schema:
 
 ```json
@@ -127,16 +138,32 @@ The final portable directory-to-JSON command is **pending Issue #10 acceptance a
 
 `pred` is a finite probability in `[0, 1]` produced by learned static fusion; it is not a provenance verdict or an autonomous moderation decision. Save the output SHA-256 beside the accepted command, both expert checksums, bundle checksum, and candidate name before sharing a result. The [claim ledger](docs/submission/claim-ledger.md) is the release gate.
 
+The [runtime smoke record](docs/submission/runtime-smoke.json) for Issue #10 commit `ee73cd1` documents an implementation-authored run on this device: Windows 11 `10.0.26200`, Python `3.12.10`, PyTorch `2.8.0+cpu`, and no available CUDA. On two checked-in images at batch size 2, a separately profiled CPU process took 23.18 seconds (0.086 images/second including startup, validation, and model loading) with a peak observed working set of 466,698,240 bytes. Explicit CPU and `auto` (which resolved to CPU) produced the same output SHA-256, `adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3`. This is same-device smoke evidence, not independent Issue #10 acceptance or a canonical command.
+
 ## Reproducing checks
 
-Run the controlled Node fixture and project suites from a clean checkout:
+With the trusted Issue #7 generation available locally, reproduce the tracked evidence and report in a fresh ignored output directory using generic Python commands:
 
 ```shell
-npm run track5:fixture
-npm run verify
+python submission_evidence.py --generation-dir ./artifacts/issue-7-fusion-v2 --candidate learned-static-fusion --expected-generation-revision static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181 --expected-bundle-sha256 9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2 --output-dir ./artifacts/submission-reproduction/evidence
+python submission_report.py ./artifacts/submission-reproduction/evidence ./artifacts/submission-reproduction/results
 ```
 
-The fixtures verify contracts, not benchmark performance. See [submission notes](docs/submission/devpost.md), [attributions](docs/submission/attributions.md), and the [demo script](docs/submission/demo-script.md) for the candidate-bound submission package.
+Verify all five tracked artifacts against the release ledger. The command canonicalizes Git's optional CRLF checkout endings back to the generated UTF-8 LF bytes before hashing:
+
+```shell
+python -c "import hashlib; from pathlib import Path; expected={'docs/submission/evidence/submission-evidence.json':'0c3ed99c9805a4d455502f446637f33d784f541536bb1445b75ef83c6c767f90','docs/submission/evidence/submission-evidence.complete.json':'5152f58ad323cb4d4afc57dac8f209c86a7ba56a95bbf7466bb2dbc2589a4c36','docs/submission/results/robustness-and-errors.md':'9ab6378752417637d6ae3e24443c5c49aff498fbdae11b01f82a1267bf6f486b','docs/submission/results/clean-vs-transformed.svg':'8163495995381f52fbccfd754cdb4c3aecfdd918949ee3d5fca0ad6c6fdef3f6','docs/submission/results/submission-report.complete.json':'d84773233606bb6f32f3fd6d226155a80d1113ee87c166f3c34f1382190f3072'}; actual={path:hashlib.sha256(Path(path).read_bytes().replace(bytes([13,10]),bytes([10]))).hexdigest() for path in expected}; assert actual == expected, actual; print(actual)"
+```
+
+Run the focused evidence/report/documentation tests, then both complete project suites:
+
+```shell
+python -m unittest tests.test_submission_evidence tests.test_submission_report tests.test_submission_docs -v
+python -m unittest discover -s tests -p "test*.py" -v
+npm test
+```
+
+See [submission notes](docs/submission/devpost.md), [attributions](docs/submission/attributions.md), and the [demo script](docs/submission/demo-script.md) for the candidate-bound submission package.
 
 ## Limitations and improvements
 

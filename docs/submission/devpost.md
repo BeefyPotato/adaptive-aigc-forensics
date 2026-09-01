@@ -6,7 +6,7 @@ AI-generated-image detectors can lose useful evidence after everyday JPEG recomp
 
 ## Technical implementation
 
-The RGB expert uses the immutable Community Forensics 384 checkpoint with RGB decoding, orientation correction, resizing, center cropping, and normalization. The signal expert applies a deterministic 26-value representation and a frozen MLP to the same losslessly materialized observation. Both logits are calibrated, then learned static fusion combines them using **0.677 RGB / 0.323 signal**, fitted only on the source-disjoint fusion-training set.
+The 21,811,969-parameter RGB expert uses the immutable Community Forensics 384 checkpoint with RGB decoding, orientation correction, resizing, center cropping, and normalization. The signal expert applies a deterministic 26-value representation and a frozen 26→16→1 tanh MLP with 449 trainable scalar parameters to the same losslessly materialized observation. Both logits are calibrated, then learned static fusion combines them using **0.677 RGB / 0.323 signal**, fitted only on the source-disjoint fusion-training set.
 
 Static fusion uses one trust allocation for every condition. The per-image degradation gate remains a separate research component and is not part of this selected design. The final accepted interface must emit exactly `{ "image_path": string, "pred": number }`, where `pred` is finite and from 0 to 1; the portable command is pending Issue #10 acceptance and final CLI binding.
 
@@ -24,7 +24,7 @@ The implementation uses PyTorch, torchvision, timm, NumPy, Pillow, safetensors, 
 
 ## Datasets and assets
 
-SID_Set is the controlled development source pool. Selection preserves source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, any selection, weights, thresholds, templates, or narrative. Dataset access and provenance constraints are documented in [data sources](../data-sources.md).
+SID_Set is the controlled development source pool. The source-level allocation is 8,000 expert-training sources for signal fitting, 2,000 fusion-training sources for calibrators/static fusion, 2,000 internal-validation sources for development decisions, and 2,000 sealed-internal-test sources reserved for one-time internal reporting. Selection preserves class balance, source-level partitioning, local file checksums, and exact/perceptual overlap checks. COCO val2017 and DALL-E Advanced organizer materials are evaluation-only: they cannot influence training, calibration, any selection, weights, thresholds, templates, or narrative. Dataset access and provenance constraints are documented in [data sources](../data-sources.md).
 
 ## Robustness and error analysis
 
@@ -44,6 +44,8 @@ The candidate-bound evidence at `docs/submission/evidence/submission-evidence.js
 
 These are candidate-bound development results, not sealed, independent-test, official, or organizer scores. The [claim ledger](claim-ledger.md) records the generation, bundle, manifest, expert, evidence, and report bindings.
 
+At each candidate's provisional internal-validation threshold, the signal expert corrected **768/1218 = 0.6305418719211823** calibrated-RGB errors. Learned static fusion's all-condition macro-AUROC gain over calibrated RGB-only was **0.016795535714285936**, with deterministic source-bootstrap interval **[0.011076105794972707, 0.0234869800759804]**. This is descriptive complementary-value evidence on internal validation, not a causal, sealed, independent-test, or organizer claim.
+
 For error analysis, inspect false positives and false negatives only within the source-disjoint internal validation set, recording the applicable corruption condition and provisional threshold. Do not use organizer labels to select examples or tune the candidate.
 
 ## Innovation and complementary value
@@ -52,7 +54,7 @@ The contribution is a provenance-conscious way to combine explicit low-level sig
 
 ## Impact and feasibility
 
-Both expert paths operate on one checksummed materialized observation, and the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. The accepted directory interface will produce a probability for review workflows, not an autonomous moderation or provenance decision. Its exact command is withheld until the Issue #10 acceptance gate and repeat-output check pass.
+Both expert paths operate on one checksummed materialized observation, and the wider harness makes robustness evidence inspectable rather than relying on undeclared augmentation. An implementation-authored same-device CPU smoke on two checked-in images took 23.18 seconds including startup/model validation, peaked at 466,698,240 working-set bytes, and produced the same output SHA-256 in explicit CPU and `auto` modes. This record is not independent Issue #10 acceptance. The accepted directory interface will produce a probability for review workflows, not an autonomous moderation or provenance decision; its exact command remains withheld until the acceptance gate passes.
 
 ## Limitations and next steps
 

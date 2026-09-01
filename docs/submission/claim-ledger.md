@@ -14,6 +14,7 @@ This ledger is the release gate for public claims. A row is publishable only whe
 | Manifest SHA-256 | `c9ea2d3b616b37844d21602a95e5f90c824a692ad609d31bbe0b982c5f45228a` |
 | RGB checkpoint | revision `6076002bf0d9dd37537f965ee2f06f826c333b61`; SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387` |
 | Signal checkpoint | revision `signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e`; model SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5` |
+| Model scale | RGB: 21,811,969 parameters (`config/community-forensics-models.json` → `models.384.parameter_count`); signal MLP: 449 trainable scalars (trusted signal model → `weights.input`, `weights.input_bias`, `weights.output`, `weights.output_bias`) |
 | Static weight | 0.677 RGB / 0.323 signal; revision `static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b` |
 | Final accepted command | **pending Issue #10 acceptance and final CLI binding**; `rgb_cli.py` is not a substitute for fused inference |
 | Direct-output schema | JSON array whose records contain exactly `image_path` and `pred`; `pred` is finite and in `[0, 1]` |
@@ -21,6 +22,7 @@ This ledger is the release gate for public claims. A row is publishable only whe
 | Report generation revision | `submission-report-generation-v1-411d7380b4667552401f4f751472836d7d3186854f50694dff5039ce0c19e796` |
 | Tracked evidence | `docs/submission/evidence/submission-evidence.json` SHA-256 `0c3ed99c9805a4d455502f446637f33d784f541536bb1445b75ef83c6c767f90`; `docs/submission/evidence/submission-evidence.complete.json` SHA-256 `5152f58ad323cb4d4afc57dac8f209c86a7ba56a95bbf7466bb2dbc2589a4c36` |
 | Tracked report | `docs/submission/results/robustness-and-errors.md` SHA-256 `9ab6378752417637d6ae3e24443c5c49aff498fbdae11b01f82a1267bf6f486b`; `docs/submission/results/clean-vs-transformed.svg` SHA-256 `8163495995381f52fbccfd754cdb4c3aecfdd918949ee3d5fca0ad6c6fdef3f6`; `docs/submission/results/submission-report.complete.json` SHA-256 `d84773233606bb6f32f3fd6d226155a80d1113ee87c166f3c34f1382190f3072` |
+| Runtime smoke | `docs/submission/runtime-smoke.json`; implementation-authored same-device record from Issue #10 commit `ee73cd17d8b592f631063fa7bde72a5e5849b770`; independent review pending; not canonical |
 | Repeated-output SHA-256 | Pending the accepted command's same-device repeat run |
 
 ## Claim records
@@ -31,6 +33,30 @@ This ledger is the release gate for public claims. A row is publishable only whe
 | Signal expert is a deterministic 26-value representation plus frozen MLP | Core expert in `learned-static-fusion`, not a second RGB backbone | `docs/signal-expert.md`; `signal_expert.py`; trusted bundle provenance | Trusted signal checkpoint revision above | Trusted bundle SHA-256 above | Signal-model SHA-256 and normalization/representation revisions | README, Devpost | Architecture documented; no standalone signal result claimed |
 | Robustness metrics and FP/FN analysis | **Internal validation** only; candidate is `learned-static-fusion` | `docs/submission/evidence/submission-evidence.json`; `docs/submission/evidence/submission-evidence.complete.json`; `docs/submission/results/robustness-and-errors.md`; `docs/submission/results/clean-vs-transformed.svg`; `docs/submission/results/submission-report.complete.json` | Evidence/report generation revisions above | Trusted bundle SHA-256 above | Manifest, both experts, evidence, report, and receipt hashes recorded above | README, Devpost, demo | Generated and checksummed; human review still required |
 | Organizer demonstration observation | Organizer demonstration only; never model-selection evidence | Organizer-supplied evaluation artifact and overlap audit | N/A — no organizer evaluation generated | N/A — no organizer result | Organizer manifest, both experts, report, and output SHA-256 would be required | Separate labeled result only | Not available / not claimed |
+
+## Metric evidence paths
+
+All performance rows below are **internal validation** and descriptive, not causal. Dot-separated fields are exact JSON paths.
+
+| Public value | Evidence JSON and exact path |
+| --- | --- |
+| Clean AUROC `0.981975` | `docs/submission/evidence/submission-evidence.json` → `metrics.clean_auroc` |
+| Mean transformed AUROC `0.9567506944444445` | `docs/submission/evidence/submission-evidence.json` → `metrics.mean_corrupted_auroc` |
+| All-condition macro AUROC `0.9603541666666667` | `docs/submission/evidence/submission-evidence.json` → `metrics.all_condition_macro_auroc` |
+| Worst condition `noise` / `sigma-0.1` / AUROC `0.810425` | `docs/submission/evidence/submission-evidence.json` → `metrics.worst_family_severity.family`, `metrics.worst_family_severity.severity`, `metrics.worst_family_severity.auroc` |
+| Brier score `0.09982875909583232` | `docs/submission/evidence/submission-evidence.json` → `metrics.brier_score` |
+| Condition-balanced Brier score `0.09680062702417022` | `docs/submission/evidence/submission-evidence.json` → `metrics.condition_balanced_brier_score` |
+| Provisional-threshold balanced accuracy `0.87625` | `docs/submission/evidence/submission-evidence.json` → `metrics.threshold_diagnostics.balanced_accuracy` |
+| Provisional-threshold FPR `0.08399999999999996` | `docs/submission/evidence/submission-evidence.json` → `metrics.threshold_diagnostics.false_positive_rate` |
+| Provisional-threshold FNR `0.16349999999999998` | `docs/submission/evidence/submission-evidence.json` → `metrics.threshold_diagnostics.false_negative_rate` |
+| Signal corrected `768/1218 = 0.6305418719211823` calibrated-RGB errors | Trusted Issue #7 `static-fallback-bundle.json` (bundle SHA-256 above) → `evaluation.complementary_value.rgb_errors_corrected_by_signal`, `evaluation.complementary_value.rgb_errors`, `evaluation.complementary_value.correction_rate` |
+| Fusion macro-AUROC gain `0.016795535714285936` | Trusted Issue #7 `static-fallback-bundle.json` → `evaluation.selection_evidence.all_condition_macro_auroc_gain` |
+| Source-bootstrap interval `[0.011076105794972707, 0.0234869800759804]` | Trusted Issue #7 `static-fallback-bundle.json` → `evaluation.source_bootstrap_all_condition_macro_auroc_gain.lower`, `evaluation.source_bootstrap_all_condition_macro_auroc_gain.upper` |
+| Static allocation `0.677` RGB / `0.323` signal | Trusted Issue #7 `static-fallback-bundle.json` → `static_weight.rgb_weight`, `static_weight.signal_weight` |
+| Source allocation 8,000 / 2,000 / 2,000 / 2,000 | Trusted `track5-manifest.json` (manifest SHA-256 above) → `selection.split_counts` keys for `expert-training`, `fusion-training`, `internal-validation`, and `sealed-internal-test`, summed across `class-0` and `class-1` |
+| CPU smoke `23.18` seconds, `0.086` images/second, `466698240` peak bytes | `docs/submission/runtime-smoke.json` → `profile.wall_seconds`, `profile.images_per_second`, `profile.peak_working_set_bytes`; acceptance flags are `accepted_submission_cli` and `canonical_command` |
+| Repeated CPU/auto smoke output SHA-256 `adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3` | `docs/submission/runtime-smoke.json` → `output_sha256`, `device_runs`; this is not the final accepted-command receipt |
+| Smoke environment versions | `docs/submission/runtime-smoke.json` → `environment.operating_system`, `environment.python`, `environment.pytorch`, `environment.numpy`, `environment.pillow`, `environment.timm`, `environment.safetensors`, `environment.cuda_available` |
 
 ## Human contribution record — required before publication
 
