@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,10 +14,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_COMMAND = (
     "python submission_inference_cli.py --image-dir <directory> "
-    "--bundle-dir artifacts/issue-7-fusion-v2 "
+    "--bundle-dir models/track5 "
     "--rgb-checkpoint <community-forensics-384.safetensors> "
-    "--signal-model <signal-model.json> --output predictions.json "
+    "--signal-model models/track5/signal-model.json --output predictions.json "
     "--device auto --batch-size 8"
+)
+PUBLIC_README_COMMAND = (
+    "python submission_inference_cli.py --image-dir ./images "
+    "--bundle-dir ./models/track5 "
+    "--rgb-checkpoint <checkpoint-path-printed-above> "
+    "--signal-model ./models/track5/signal-model.json "
+    "--output ./predictions.json --device auto --batch-size 8"
 )
 ISSUE10_COMMIT = "b8982dfb3400fa92fde65cc0ea6f2fe141a4b402"
 SIGNAL_PROFILE = "hackathon-v1"
@@ -25,6 +33,9 @@ SIGNAL_CHECKPOINT_REVISION = (
 )
 SIGNAL_NORMALIZATION_REVISION = (
     "signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80"
+)
+FUSION_GENERATION_REVISION = (
+    "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
 )
 
 
@@ -35,33 +46,174 @@ def _canonical_lf_bytes(path: Path) -> bytes:
 
 
 class SubmissionReadmeTests(unittest.TestCase):
-    def test_readme_publishes_the_accepted_fusion_cli_and_contract(self) -> None:
+    def test_public_deployment_artifacts_are_tracked_and_byte_exact(self) -> None:
+        expected_hashes = {
+            "models/track5/signal-model.json": (
+                "cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5"
+            ),
+            "models/track5/static-fallback-bundle.json": (
+                "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2"
+            ),
+            "models/track5/static-fallback.complete.json": (
+                "8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112"
+            ),
+        }
+
+        for relative_path, expected_hash in expected_hashes.items():
+            with self.subTest(relative_path=relative_path):
+                artifact = ROOT / relative_path
+                self.assertTrue(artifact.is_file(), f"missing public artifact: {relative_path}")
+                self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), expected_hash)
+                tracked = subprocess.run(
+                    ["git", "ls-files", "--error-unmatch", relative_path],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(tracked.returncode, 0, f"untracked public artifact: {relative_path}")
+
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+        self.assertIn("models/track5/*.json -text", attributes)
+
+    def test_receipt_bound_submission_artifacts_reproduce_from_checkout(self) -> None:
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+        for pattern in (
+            "docs/submission/evidence/*.json -text",
+            "docs/submission/results/*.json -text",
+            "docs/submission/results/*.md -text",
+            "docs/submission/results/*.svg -text",
+        ):
+            self.assertIn(pattern, attributes)
+
+        expected_hashes = {
+            "robustness-and-errors.md": (
+                "9ab6378752417637d6ae3e24443c5c49aff498fbdae11b01f82a1267bf6f486b"
+            ),
+            "clean-vs-transformed.svg": (
+                "8163495995381f52fbccfd754cdb4c3aecfdd918949ee3d5fca0ad6c6fdef3f6"
+            ),
+            "submission-report.complete.json": (
+                "d84773233606bb6f32f3fd6d226155a80d1113ee87c166f3c34f1382190f3072"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_directory = Path(temporary_directory) / "results"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "submission_report.py"),
+                    str(ROOT / "docs/submission/evidence"),
+                    str(output_directory),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            for filename, expected_hash in expected_hashes.items():
+                with self.subTest(filename=filename):
+                    self.assertEqual(
+                        hashlib.sha256((output_directory / filename).read_bytes()).hexdigest(),
+                        expected_hash,
+                    )
+
+    def test_readme_has_a_clean_clone_inference_quick_start(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## Submission inference status", readme)
+        self.assertIn("## Project overview", readme)
+        self.assertIn("## Setup and installation", readme)
+        self.assertIn("### 4. Run directory inference with `submission_inference_cli.py`", readme)
         self.assertIn("learned-static-fusion", readme)
         self.assertIn("0.677 RGB / 0.323 signal", readme)
-        self.assertEqual(readme.count(CANONICAL_COMMAND), 1)
-        self.assertIn(ISSUE10_COMMIT, readme)
+        self.assertIn("git clone https://github.com/BeefyPotato/adaptive-aigc-forensics.git", readme)
+        self.assertIn("python -m venv .venv", readme)
+        self.assertIn("python -m pip install --requirement requirements-rgb.txt", readme)
+        self.assertIn("from rgb_expert import download_checkpoint", readme)
+        self.assertEqual(readme.count(PUBLIC_README_COMMAND), 1)
+        self.assertIn("models/track5/static-fallback-bundle.json", readme)
+        self.assertIn("models/track5/static-fallback.complete.json", readme)
+        self.assertIn("models/track5/signal-model.json", readme)
         self.assertIn("JSON array", readme)
-        self.assertIn("exactly this per-image schema", readme)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
         self.assertIn('"pred": 0.73', readme)
         self.assertIn("finite probability in `[0, 1]`", readme)
-        self.assertIn("## Setup", readme)
-        self.assertIn("## Training, calibration, and reporting order", readme)
-        self.assertIn("## Limitations and improvements", readme)
-        self.assertIn("## Contributions", readme)
-        self.assertIn("docs/submission/claim-ledger.md", readme)
-        self.assertIn(
-            "training, calibration, any selection, weights, thresholds, templates, or narrative",
-            readme,
-        )
-        self.assertNotIn("current raw-RGB candidate", readme)
-        self.assertNotIn("sole public inference command", readme)
-        self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", readme)
+        self.assertIn("estimated probability that the image is AIGC-generated", readme)
+        self.assertIn("## Reproduce the reported results", readme)
+        self.assertIn("## Limitations and future work", readme)
 
-    def test_readme_discloses_scale_splits_compute_and_reproduction(self) -> None:
+    def test_readme_explains_the_rgb_expert_selection_with_cited_evidence(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+        attributions = (ROOT / "docs/submission/attributions.md").read_text(encoding="utf-8")
+
+        for explanation in (
+            "### Why Community Forensics 384",
+            "ViT-S/16",
+            "trained the classifier end-to-end",
+            "5.4-million-image class-balanced corpus",
+            "2.7 million generated images",
+            "4,803 generator models",
+            "2.7 million real images",
+            "unseen generator families",
+            "384-pixel model outperformed the 224-pixel model",
+            "JPEG compression and Gaussian blur",
+            "FFT-energy, neighbouring-pixel, and residual statistics",
+            "not image-level proof of non-overlap",
+        ):
+            self.assertIn(explanation, readme)
+
+        paper_url = "https://arxiv.org/html/2411.04125v2"
+        dataset_url = "https://huggingface.co/datasets/OwensLab/CommunityForensics"
+        for document in (readme, ledger, attributions):
+            self.assertIn(paper_url, document)
+            self.assertIn(dataset_url, document)
+
+        self.assertNotIn("dynamic fusion", readme.lower())
+
+    def test_readme_uses_domain_language_and_documents_compute_and_data_flow(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+
+        for term in (
+            "frozen RGB expert",
+            "compact signal expert",
+            "26-value signal representation",
+            "CPU-only",
+            "23.18 seconds",
+            "0.086 images/second",
+            "466,698,240 bytes",
+            "exact and perceptual",
+            "node ./src/track5-cli.js build-manifest",
+            "node ./scripts/materialize-track5-observations.mjs",
+            "signal-expert training",
+            "calibrator and static-weight fitting",
+        ):
+            self.assertIn(term, readme)
+        for avoided_term in (
+            "RGB detector",
+            "low-level signal model",
+            "frequency/residual representation",
+        ):
+            self.assertNotIn(avoided_term, readme)
+        for document in (readme, ledger):
+            self.assertIn(FUSION_GENERATION_REVISION, document)
+
+        for ledger_binding in (
+            "26→16→1",
+            "416 + 16 + 16 + 1",
+            "8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112",
+            "metrics.corruption_families.jpeg.auroc",
+            "metrics.corruption_families.blur.auroc",
+            "metrics.corruption_families.resize.auroc",
+            "metrics.corruption_families.noise.auroc",
+            "metrics.corruption_families.color.auroc",
+            "metrics.corruption_families.crop.auroc",
+        ):
+            self.assertIn(ledger_binding, ledger)
+
+    def test_readme_preserves_public_science_and_reproduction_context(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         model_config = json.loads((ROOT / "config/community-forensics-models.json").read_text("utf-8"))
 
@@ -75,22 +227,22 @@ class SubmissionReadmeTests(unittest.TestCase):
             "2,000 fusion-training sources",
             "2,000 internal-validation sources",
             "2,000 sealed-internal-test sources",
-            "23.18 seconds",
-            "466,698,240 bytes",
-            "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
-            "21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2",
-            "independently reviewed",
             SIGNAL_PROFILE,
             "8,064 training draws",
             "400 validation sources",
             "8,000 validation observations",
             SIGNAL_CHECKPOINT_REVISION,
             SIGNAL_NORMALIZATION_REVISION,
+            "0.981975",
+            "0.9567506944444445",
+            "0.9603541666666667",
+            "noise / sigma-0.1 / 0.810425",
         ):
             self.assertIn(disclosure, readme)
         for command in (
-            "python submission_evidence.py --generation-dir ./artifacts/issue-7-fusion-v2",
-            "python submission_report.py ./artifacts/submission-reproduction/evidence "
+            "New-Item -ItemType Directory -Force ./artifacts/submission-reproduction",
+            "mkdir -p ./artifacts/submission-reproduction",
+            "python submission_report.py ./docs/submission/evidence "
             "./artifacts/submission-reproduction/results",
             'python -m unittest discover -s tests -p "test*.py" -v',
             "npm test",
@@ -98,88 +250,144 @@ class SubmissionReadmeTests(unittest.TestCase):
             self.assertIn(command, readme)
         self.assertNotIn("npm run verify", readme)
 
-    def test_publication_links_keep_only_human_actions_open(self) -> None:
+    def test_readme_is_public_facing_and_lists_submission_deliverables(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Track 5 deliverables and repository map", readme)
+        self.assertIn("### Submission deliverables", readme)
+        self.assertIn("### Solution code map", readme)
+        self.assertIn("https://github.com/BeefyPotato/adaptive-aigc-forensics", readme)
+        for track5_deliverable in (
+            "Written project description",
+            "Public code / GitHub repository",
+            "Demo video",
+            "Robustness evaluation summary",
+            "Error analysis note",
+        ):
+            self.assertIn(track5_deliverable, readme)
+        for relative_path in (
+            "README.md",
+            "requirements-rgb.txt",
+            "requirements-signal.txt",
+            "package-lock.json",
+            "submission_inference_cli.py",
+            "submission_inference.py",
+            "shared_observation.py",
+            "safe_output.py",
+            "rgb_expert.py",
+            "rgb_baseline.py",
+            "signal_expert.py",
+            "signal_pipeline.py",
+            "signal_maps.py",
+            "fusion_pipeline.py",
+            "src/source-inventory.js",
+            "src/track5-manifest.js",
+            "src/balanced-sampler.js",
+            "src/leakage-audit.js",
+            "src/track5-pipeline.js",
+            "src/track5-conditions.js",
+            "src/corruption-harness.js",
+            "src/materialized-observations.js",
+            "scripts/materialize-track5-observations.mjs",
+            "submission_evidence.py",
+            "submission_report.py",
+            "models/track5/signal-model.json",
+            "models/track5/static-fallback-bundle.json",
+            "models/track5/static-fallback.complete.json",
+            "config/community-forensics-models.json",
+            "docs/submission/evidence/submission-evidence.json",
+            "docs/submission/evidence/submission-evidence.complete.json",
+            "docs/submission/results/robustness-and-errors.md",
+            "docs/submission/results/clean-vs-transformed.svg",
+            "docs/submission/results/submission-report.complete.json",
+            "docs/submission/attributions.md",
+            "docs/submission/claim-ledger.md",
+            "docs/submission/runtime-smoke.json",
+        ):
+            self.assertIn(relative_path, readme)
+
+        for excluded_submission_draft in (
+            "docs/submission/devpost.md",
+            "docs/submission/demo-script.md",
+            "repository contains the Devpost draft and recording plan",
+        ):
+            self.assertNotIn(excluded_submission_draft, readme)
+
+        for internal_phrase in (
+            "Issue #",
+            "HUMAN REQUIRED",
+            "release gate",
+            "independently reviewed",
+            "accepted commit",
+            "accepted command",
+            "time-boxed",
+            "make the repository public",
+            "do not infer",
+        ):
+            self.assertNotIn(internal_phrase, readme)
+
+        for result in (
+            "768/1218 = 0.6305418719211823",
+            "0.016795535714285936",
+            "[0.011076105794972707, 0.0234869800759804]",
+        ):
+            self.assertIn(result, readme)
+        self.assertIn("descriptive", readme)
+        self.assertIn("not a causal", readme)
+
+    def test_readme_and_ledger_record_confirmed_equal_team_contributions(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
 
-        for document in (readme, devpost, ledger):
-            self.assertIn("https://github.com/BeefyPotato/adaptive-aigc-forensics", document)
-            self.assertIn("HUMAN REQUIRED", document)
-            self.assertIn("YouTube", document)
-            self.assertIn("Devpost", document)
-        self.assertIn("make the repository public", readme)
-        self.assertIn("_Unassigned — do not infer_", ledger)
+        self.assertIn("## Team member contributions", readme)
+        self.assertIn(
+            "Chrio Phee and Matt Tan contributed equally to the repository and project deliverables.",
+            readme,
+        )
+        for person in ("Chrio Phee", "Matt Tan"):
+            self.assertIn(
+                f"| {person} | Equal contribution to the repository and project deliverables "
+                "| 2026-09-01 | Owner confirmation in project session |",
+                ledger,
+            )
+        self.assertNotIn("_Unassigned", ledger)
+        self.assertIn(
+            "- [ ] Confirm all team-contribution rows with the people named.",
+            ledger,
+        )
 
-        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
-        for document in (readme, devpost):
-            for result in (
-                "768/1218 = 0.6305418719211823",
-                "0.016795535714285936",
-                "[0.011076105794972707, 0.0234869800759804]",
-            ):
-                self.assertIn(result, document)
-            self.assertIn("descriptive", document)
-            self.assertIn("not a causal", document)
+    def test_submission_drafts_are_not_part_of_the_public_repository(self) -> None:
+        for relative_path in (
+            "docs/submission/devpost.md",
+            "docs/submission/demo-script.md",
+        ):
+            with self.subTest(relative_path=relative_path):
+                self.assertFalse((ROOT / relative_path).exists())
+                tracked = subprocess.run(
+                    ["git", "ls-files", "--error-unmatch", relative_path],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(tracked.returncode, 0)
 
 
 class SubmissionPackageTests(unittest.TestCase):
-    def test_devpost_uses_required_headings_and_selected_fusion_design(self) -> None:
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
-
-        for heading in (
-            "# Adaptive AIGC Forensics",
-            "## Problem and solution",
-            "## Technical implementation",
-            "## Development tools",
-            "## Models and APIs",
-            "## Libraries and frameworks",
-            "## Datasets and assets",
-            "## Robustness and error analysis",
-            "## Innovation and complementary value",
-            "## Impact and feasibility",
-            "## Limitations and next steps",
-            "## Team contributions",
-            "## Demo and repository",
-        ):
-            self.assertIn(heading, devpost)
-        self.assertIn("learned-static-fusion", devpost)
-        self.assertIn("0.677 RGB / 0.323 signal", devpost)
-        self.assertIn("cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5", devpost)
-        self.assertEqual(devpost.count(CANONICAL_COMMAND), 1)
-        self.assertIn(ISSUE10_COMMIT, devpost)
-        self.assertIn("internal validation", devpost)
-        self.assertIn("training, calibration, any selection, weights, thresholds, templates, or narrative", devpost)
-        self.assertNotIn("current raw RGB-only candidate", devpost)
-        self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", devpost)
-        self.assertNotIn("](attributions.md)", devpost)
-        self.assertNotIn("](../data-sources.md)", devpost)
-        self.assertNotIn("](claim-ledger.md)", devpost)
-        self.assertNotIn("](demo-script.md)", devpost)
-        for public_link in (
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/attributions.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/data-sources.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/demo-script.md",
-        ):
-            self.assertIn(public_link, devpost)
-
     def test_accepted_fusion_interface_preserves_the_submission_output_contract(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
-        for document in (readme, devpost, ledger):
-            self.assertIn("learned-static-fusion", document)
-            self.assertIn(CANONICAL_COMMAND, document)
-            self.assertIn(ISSUE10_COMMIT, document)
+        self.assertIn("learned-static-fusion", readme)
+        self.assertIn(PUBLIC_README_COMMAND, readme)
+        self.assertIn("learned-static-fusion", ledger)
+        self.assertIn(CANONICAL_COMMAND, ledger)
+        self.assertIn(ISSUE10_COMMIT, ledger)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
-        self.assertIn('`{ "image_path": string, "pred": number }`', devpost)
         self.assertIn("exactly `image_path` and `pred`", ledger)
 
     def test_supporting_documents_preserve_provenance_and_human_review_gates(self) -> None:
         attributions = (ROOT / "docs" / "submission" / "attributions.md").read_text(encoding="utf-8")
-        demo = (ROOT / "docs" / "submission" / "demo-script.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         for name in (
@@ -187,11 +395,6 @@ class SubmissionPackageTests(unittest.TestCase):
             "Hugging Face", "timm", "safetensors", "Node.js", "Sharp",
         ):
             self.assertIn(name, attributions)
-        self.assertIn("120-second", demo)
-        self.assertIn("learned-static-fusion", demo)
-        self.assertIn("0.677 RGB / 0.323 signal", demo)
-        self.assertIn(CANONICAL_COMMAND, demo)
-        self.assertIn("internal validation", demo)
         self.assertIn("Human contribution record", ledger)
         self.assertIn("Bundle SHA-256", ledger)
         self.assertIn("Final accepted command", ledger)
@@ -209,12 +412,9 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2", ledger)
         self.assertIn("cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5", ledger)
         self.assertIn("static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b", ledger)
-        self.assertIn("claim-ledger-complete and human-reviewed", demo)
 
     def test_final_fusion_evidence_is_linked_and_bound_to_cli_acceptance(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
-        demo = (ROOT / "docs" / "submission" / "demo-script.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         for path in (
@@ -226,16 +426,14 @@ class SubmissionPackageTests(unittest.TestCase):
         ):
             self.assertIn(path, ledger)
         self.assertIn("docs/submission/results/robustness-and-errors.md", readme)
-        self.assertIn("docs/submission/results/clean-vs-transformed.svg", devpost)
-        self.assertIn("docs/submission/results/clean-vs-transformed.svg", demo)
 
         for metric in (
-            "0.981975", "0.9567506944444445", "0.9603541666666667",
-            "noise / sigma-0.1 / 0.810425", "0.09982875909583232",
-            "0.09680062702417022", "0.87625", "0.08399999999999996",
-            "0.16349999999999998",
+            "0.981975",
+            "0.9567506944444445",
+            "0.9603541666666667",
+            "noise / sigma-0.1 / 0.810425",
         ):
-            self.assertIn(metric, devpost)
+            self.assertIn(metric, readme)
         for binding in (
             "submission-evidence-generation-v1-b018d8f0326f8a9ed9945b52eda2dadeae659b3827268af69c38aa4c09e27cc1",
             "submission-report-generation-v1-411d7380b4667552401f4f751472836d7d3186854f50694dff5039ce0c19e796",

@@ -18,4 +18,4 @@ On identical matched internal-validation observations, calibrated RGB-only has a
 
 At each candidate's provisional internal-validation-only maximum-Youden-J threshold, the signal expert corrects 768 of 1,218 calibrated-RGB errors (`0.6305418719211823`). This is held-out complementary value, not merely an ensemble-gain claim. Thresholds remain provisional and no sealed internal test or organizer demonstration labels or metrics were accessed.
 
-Generated archives, materialized observations, caches, logits, and the frozen bundle remain under ignored `artifacts/` paths and are not committed.
+Generated archives, materialized observations, caches, and per-observation logits remain under ignored `artifacts/` paths. The minimal first-party inference package is tracked under `models/track5`; it contains the signal model, aggregate fusion bundle, and completion receipt, but no datasets, image paths, labels, or per-image logits.

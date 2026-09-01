@@ -1,1 +1,6 @@
 fixtures/track5/** text eol=lf
+models/track5/*.json -text
+docs/submission/evidence/*.json -text
+docs/submission/results/*.json -text
+docs/submission/results/*.md -text
+docs/submission/results/*.svg -text

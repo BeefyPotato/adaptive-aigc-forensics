@@ -12,7 +12,7 @@
     "signal_profile": "hackathon-v1",
     "static_weight_revision": "static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b"
   },
-  "canonical_command": "python submission_inference_cli.py --image-dir <directory> --bundle-dir artifacts/issue-7-fusion-v2 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model <signal-model.json> --output predictions.json --device auto --batch-size 8",
+  "canonical_command": "python submission_inference_cli.py --image-dir <directory> --bundle-dir models/track5 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model models/track5/signal-model.json --output predictions.json --device auto --batch-size 8",
   "environment": {
     "cuda_available": false,
     "numpy": "2.3.5",

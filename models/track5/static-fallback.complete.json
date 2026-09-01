@@ -1,0 +1,53 @@
+{
+  "completion_schema_version": "static-fallback-completion-v2",
+  "provenance": {
+    "corruption_version": "track5-corruption-v1+sharp-0.35.4",
+    "manifest_schema_version": "track5-manifest-v1",
+    "manifest_sha256": "c9ea2d3b616b37844d21602a95e5f90c824a692ad609d31bbe0b982c5f45228a",
+    "rgb_checkpoint_revision": "6076002bf0d9dd37537f965ee2f06f826c333b61",
+    "rgb_checkpoint_sha256": "b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387",
+    "rgb_preprocessing_version": "community-forensics-eval-v1",
+    "rgb_score_direction": "positive-logit-means-ai-generated",
+    "shared_observation_preprocessing_version": "shared-preprocessing-v1",
+    "signal_acceptance_scope": "issue-6-timeboxed-acceptance",
+    "signal_checkpoint_revision": "signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e",
+    "signal_experiment_profile": "hackathon-v1",
+    "signal_feature_extraction_version": "signal-feature-extraction-v1",
+    "signal_normalization_revision": "signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80",
+    "signal_representation_version": "signal-representation-v1",
+    "signal_resolution": 384
+  },
+  "bundle_revision": "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179",
+  "bundle_sha256": "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2",
+  "artifacts": {
+    "calibrated-fusion-training-logits.json": {
+      "path": "calibrated-fusion-training-logits.json",
+      "file_sha256": "03509299e28ffe4e194780d617ab6661ac39eea88840c6955bded4b3b4bad58f",
+      "records_sha256": "35b899ea7547aad19a752d36b7c55fd38dd192885177edccd499255573cc8fe8",
+      "observation_count": 40000
+    },
+    "calibrated-internal-validation-logits.json": {
+      "path": "calibrated-internal-validation-logits.json",
+      "file_sha256": "64dadc9f2ed8bb2a6b242fed5d246a3cef051014d06241a8e23a2e54ab5f824e",
+      "records_sha256": "3a32620424c9fef01867500536b0b503e825e15afd3fd2f8eb933579bca7686d",
+      "observation_count": 8000
+    },
+    "matched-fusion-training-logits.json": {
+      "path": "matched-fusion-training-logits.json",
+      "file_sha256": "4b0e0303549358b3eb9d73a2044a9c4eeb51db151c2cf9b092132f8e9b50ad32",
+      "records_sha256": "28d2269d38d72dcb7ef31448a1595d25eb473c3cc1031aa655a70e24282d0ebf",
+      "observation_count": 40000
+    },
+    "matched-internal-validation-logits.json": {
+      "path": "matched-internal-validation-logits.json",
+      "file_sha256": "fe4518231fa954c6fb7884119f557797136b4a0693e3cbee0faee2cc641a2ede",
+      "records_sha256": "da609c7ba3c7253071eee9797dafc0bc5611329b760af1f88fb0322f0d1587b2",
+      "observation_count": 8000
+    },
+    "static-fallback-bundle.json": {
+      "path": "static-fallback-bundle.json",
+      "file_sha256": "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2"
+    }
+  },
+  "generation_revision": "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
+}

@@ -7,15 +7,15 @@ Issue #10 ships directory inference for the frozen Issue #7 learned-static polic
 ```powershell
 python submission_inference_cli.py `
   --image-dir <directory> `
-  --bundle-dir artifacts/issue-7-fusion-v2 `
+  --bundle-dir models/track5 `
   --rgb-checkpoint <community-forensics-384.safetensors> `
-  --signal-model <signal-model.json> `
+  --signal-model models/track5/signal-model.json `
   --output predictions.json `
   --device auto `
   --batch-size 8
 ```
 
-Install the pinned signal and RGB requirements and use Python 3.12. The first RGB checkpoint acquisition may require network access; after the revision-pinned checkpoint, signal model, and complete generation directory are present, inference is fully offline. Checkpoint acquisition uses `rgb_expert.download_checkpoint`, which verifies the SHA-256 from `config/community-forensics-models.json`.
+Install the pinned RGB requirements and use Python 3.12. The first-party signal model, fusion bundle, and completion receipt ship under `models/track5`. The first RGB checkpoint acquisition may require network access; after the revision-pinned checkpoint is present, inference is fully offline. Checkpoint acquisition uses `rgb_expert.download_checkpoint`, which verifies the SHA-256 from `config/community-forensics-models.json`.
 
 The deployment bundle directory requires only `static-fallback.complete.json` and `static-fallback-bundle.json`; training labels, corruption manifests, matched logits, and calibrated evaluation caches are not inference dependencies. The receipt still binds the complete Issue #7 generation inventory, while the deployment reader deliberately opens only the receipt and bundle. It validates their content-derived revisions, the bundle checksum, calibrators, static weight, normalizers, preprocessing contract, and expert revisions. It additionally pins:
 
@@ -42,7 +42,7 @@ An empty input writes exactly a valid JSON array (pretty-printed with a trailing
 
 ## Reproduction and profiling
 
-On a clean environment, install both requirements files, acquire and verify the frozen artifacts above, run the canonical command on the shared fixture twice, and compare SHA-256 hashes. Run the opt-in real-artifact gate with `SUBMISSION_REAL_BUNDLE_DIR`, `SUBMISSION_REAL_RGB_CHECKPOINT`, and `SUBMISSION_REAL_SIGNAL_MODEL` set:
+On a clean environment, install `requirements-rgb.txt`, download the verified RGB checkpoint, run the canonical command with the tracked `models/track5` package on the shared fixture twice, and compare SHA-256 hashes. Run the opt-in real-artifact gate with `SUBMISSION_REAL_BUNDLE_DIR`, `SUBMISSION_REAL_RGB_CHECKPOINT`, and `SUBMISSION_REAL_SIGNAL_MODEL` set:
 
 ```powershell
 python -m unittest tests.test_submission_inference_real -v
@@ -73,4 +73,4 @@ The sampled-real parity batch was selected before scoring as the lexicographical
 
 On this four-image sampled-real batch, repeated CPU output was byte-identical at SHA-256 `21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2`; the observed maximum absolute parity delta was exactly `0` (within `1e-5`).
 
-The real Issue #7 receipt/bundle, 87,262,324-byte RGB checkpoint, and signal model remain ignored runtime artifacts; no weights, caches, labels, manifests, or image bytes are committed. This project records same-device evidence only.
+The first-party deployment receipt, fusion bundle, and signal model are tracked under `models/track5`; their exact hashes are listed in the README. The 87,262,324-byte third-party RGB checkpoint, datasets, evaluation caches, labels, manifests, and image bytes are not committed. This project records same-device evidence only.
