@@ -1,0 +1,147 @@
+{
+  "bindings": {
+    "bundle_revision": "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179",
+    "bundle_sha256": "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2",
+    "generation_revision": "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
+  },
+  "error_analysis": {
+    "representative_cases": {
+      "clean-false-negative": {
+        "condition_family": "clean",
+        "correction_status": "signal-corrects-rgb-error",
+        "error_kind": "false-negative",
+        "expert_agreement": "disagree",
+        "rank": "0d19c682e5aef4deca8c9df50864e9583a72aa9b4e4fa93adc56905cd94bd32c",
+        "severity": "clean",
+        "source_id": "sid-set:full_synthetic_005849",
+        "variant_id": "variant-v1-0982257336b9674738600a3757d0c1e1fe0922ade2db1683403337120e08893d"
+      },
+      "clean-false-positive": {
+        "condition_family": "clean",
+        "correction_status": "rgb-corrects-signal-error",
+        "error_kind": "false-positive",
+        "expert_agreement": "disagree",
+        "rank": "0468fa8d8489a1071a677d55fd5c05206b04c6c9a3586d373ac9c70ddc694df3",
+        "severity": "clean",
+        "source_id": "sid-set:0bffbd3a7d89efff",
+        "variant_id": "variant-v1-cdab6df3ac140c695cb2c316eeac52bafe7438eab0684ac354756eefd8bbf271"
+      },
+      "transformed-false-negative": {
+        "condition_family": "noise",
+        "correction_status": "both-experts-wrong",
+        "error_kind": "false-negative",
+        "expert_agreement": "agree",
+        "rank": "01333945f0053874e455c4a2f3450153fcc6fe9b32fa301f828a8512789cfcf9",
+        "severity": "sigma-0.05",
+        "source_id": "sid-set:full_synthetic_005762",
+        "variant_id": "variant-v1-cb2e06d89e9e68053d2d970635056bcf2093b97bd59e9a2f1adc911d491597fc"
+      },
+      "transformed-false-positive": {
+        "condition_family": "blur",
+        "correction_status": "signal-corrects-rgb-error",
+        "error_kind": "false-positive",
+        "expert_agreement": "disagree",
+        "rank": "000393fb66ad6aa5559269692440bf95c51dd58490b49ee49190de38ca6839c3",
+        "severity": "sigma-2",
+        "source_id": "sid-set:01741ff5e11d9c31",
+        "variant_id": "variant-v1-896cd5429fc0b53e05bee9e60a941a752c0027aec8ced72d54ab261a966c42af"
+      }
+    },
+    "selection_rule": "submission-error-hash-rank-v1"
+  },
+  "evaluation": {
+    "observation_count": 8000,
+    "source_count": 400
+  },
+  "evaluation_scope": "internal-validation",
+  "limitations": [
+    "Internal validation influenced candidate and threshold selection.",
+    "These results are not organizer, sealed, official, independent-test, or unbiased estimates.",
+    "Upstream checkpoint overlap cannot be disproven.",
+    "The weakest-condition/FPR/FNR discussion is descriptive, not causal."
+  ],
+  "metrics": {
+    "all_condition_macro_auroc": 0.9603541666666667,
+    "brier_score": 0.09982875909583232,
+    "clean_auroc": 0.981975,
+    "condition_balanced_brier_score": 0.09680062702417022,
+    "corruption_families": {
+      "blur": {
+        "auroc": 0.975375,
+        "auroc_by_severity": {
+          "sigma-0.5": 0.9799,
+          "sigma-1": 0.977375,
+          "sigma-2": 0.96885
+        }
+      },
+      "clean": {
+        "auroc": 0.981975,
+        "auroc_by_severity": {
+          "clean": 0.981975
+        }
+      },
+      "color": {
+        "auroc": 0.9756958333333333,
+        "auroc_by_severity": {
+          "brightness-0.8": 0.97755,
+          "brightness-1.2": 0.9658,
+          "contrast-0.8": 0.9781,
+          "contrast-1.2": 0.9724,
+          "saturation-0.8": 0.978125,
+          "saturation-1.2": 0.9822
+        }
+      },
+      "crop": {
+        "auroc": 0.977675,
+        "auroc_by_severity": {
+          "center-0.8": 0.977675
+        }
+      },
+      "jpeg": {
+        "auroc": 0.9655125,
+        "auroc_by_severity": {
+          "quality-30": 0.929675,
+          "quality-50": 0.97275,
+          "quality-70": 0.9781,
+          "quality-90": 0.981525
+        }
+      },
+      "noise": {
+        "auroc": 0.8838833333333334,
+        "auroc_by_severity": {
+          "sigma-0.02": 0.962575,
+          "sigma-0.05": 0.87865,
+          "sigma-0.1": 0.810425
+        }
+      },
+      "resize": {
+        "auroc": 0.9623625,
+        "auroc_by_severity": {
+          "factor-0.25": 0.947,
+          "factor-0.5": 0.977725
+        }
+      }
+    },
+    "degradation_drop": 0.02522430555555555,
+    "degradation_retention": 0.9743126805106489,
+    "evaluation_split": "internal-validation",
+    "mean_corrupted_auroc": 0.9567506944444445,
+    "metric_schema_version": "fusion-candidate-metrics-v1",
+    "threshold_diagnostics": {
+      "balanced_accuracy": 0.87625,
+      "false_negative_rate": 0.16349999999999998,
+      "false_positive_rate": 0.08399999999999996,
+      "selection_rule": "maximum-youden-j",
+      "sensitivity": 0.8365,
+      "specificity": 0.916,
+      "status": "provisional-internal-validation-only"
+    },
+    "worst_family_severity": {
+      "auroc": 0.810425,
+      "family": "noise",
+      "severity": "sigma-0.1"
+    }
+  },
+  "schema_version": "submission-evidence-v1",
+  "system_id": "learned-static-fusion"
+}
