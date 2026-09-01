@@ -8,9 +8,13 @@ from pathlib import Path
 
 import numpy as np
 
-from rgb_expert import CommunityForensicsBackend, load_model_metadata
+from rgb_expert import CommunityForensicsBackend
 from signal_expert import read_model_bundle
-from submission_inference import load_frozen_bundle, resolve_device, run_submission
+from submission_inference import (
+    resolve_device,
+    run_submission,
+    validate_submission_artifacts,
+)
 
 
 class SignalModelBackend:
@@ -49,17 +53,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _cuda_is_available() -> bool:
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        import torch
-
-        device = resolve_device(args.device, cuda_available=torch.cuda.is_available())
-        bundle = load_frozen_bundle(args.bundle_dir)
-        metadata = load_model_metadata()
-        provenance = bundle.get("provenance", {})
-        if provenance.get("rgb_checkpoint_revision") not in (None, metadata["models"]["384"]["revision"]):
-            raise ValueError("RGB checkpoint metadata does not match frozen bundle provenance.")
+        device = (
+            "cpu"
+            if args.device == "cpu"
+            else resolve_device(args.device, cuda_available=_cuda_is_available())
+        )
+        bundle = validate_submission_artifacts(
+            args.bundle_dir,
+            rgb_checkpoint=args.rgb_checkpoint,
+            signal_model=args.signal_model,
+        )
         rgb = CommunityForensicsBackend(args.rgb_checkpoint, resolution=384, device=device)
         signal = SignalModelBackend(args.signal_model, bundle)
         run_submission(

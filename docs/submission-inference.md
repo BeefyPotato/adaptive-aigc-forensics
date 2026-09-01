@@ -17,13 +17,18 @@ python submission_inference_cli.py `
 
 Install the pinned signal and RGB requirements and use Python 3.12. The first RGB checkpoint acquisition may require network access; after the revision-pinned checkpoint, signal model, and complete generation directory are present, inference is fully offline. Checkpoint acquisition uses `rgb_expert.download_checkpoint`, which verifies the SHA-256 from `config/community-forensics-models.json`.
 
-The generation directory must be the exact corrected Issue #7 inventory. The reader validates every completion/artifact binding, calibrator, static weight, normalizer, preprocessing revision, expert revision, and content-derived revision. It additionally pins:
+The deployment bundle directory needs only `static-fallback.complete.json` and `static-fallback-bundle.json`; training labels, corruption manifests, matched logits, and calibrated evaluation caches are not inference dependencies. The receipt still binds the complete Issue #7 generation inventory, while the deployment reader deliberately opens only the receipt and bundle. It validates their content-derived revisions, the bundle checksum, calibrators, static weight, normalizers, preprocessing contract, and expert revisions. It additionally pins:
 
 - generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181`;
 - bundle `static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179`;
 - bundle file SHA-256 `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2`;
+- Community Forensics 384 checkpoint SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387`;
+- signal-model SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5`;
 - signal profile `hackathon-v1`, checkpoint and normalization revisions carried by the bundle;
+- RGB checkpoint revision, 384/440 geometry, ImageNet normalization, preprocessing version, score direction, and shared-observation preprocessing version;
 - calibrated-logit weights `0.677` RGB and `0.323` signal.
+
+Both model files and every runtime binding are verified before either model is constructed. Any substituted checkpoint, signal model, receipt, bundle, preprocessing contract, score direction, or shared geometry fails closed.
 
 ## Input and output behavior
 
@@ -31,10 +36,28 @@ Supported extensions are BMP, GIF, JPEG/JPG, PNG, PPM, TIFF/TIF, and WebP, case-
 
 An empty input writes exactly a valid JSON array (pretty-printed with a trailing newline). Every non-empty output is a JSON array whose records contain exactly `image_path` and `pred`; `pred` is a finite probability in `[0, 1]`. No labels, thresholds, logits, corruption metadata, experiment manifest, organizer knowledge, or provenance enter submission records. The frozen threshold logit is evaluation provenance only.
 
-`--device cpu` never initializes a CUDA model. `--device cuda` fails when CUDA is unavailable. `--device auto` selects CUDA when PyTorch reports it available and otherwise selects CPU. Output bytes are deterministic across repeated runs on the same runtime, device, artifacts, and inputs; cross-device results are compared using the RGB metadata numeric tolerance rather than byte equality.
+`--device cpu` does not query the CUDA runtime. `--device cuda` fails when CUDA is unavailable, before artifact or model loading and before output publication. `--device auto` is the only mode that may probe CUDA; it selects CUDA when PyTorch reports it available and otherwise selects CPU. Output bytes are deterministic across repeated runs on the same runtime, device, artifacts, and inputs; cross-device results are compared using the RGB metadata numeric tolerance rather than byte equality.
 
 ## Reproduction and profiling
 
-On a clean machine, install both requirements files, acquire and verify the frozen artifacts above, run the canonical command on the shared fixture twice, and compare SHA-256 hashes. Compare each fixture probability to the evaluation-path result within `config/community-forensics-models.json`'s declared tolerance. Record OS, Python/PyTorch/CUDA versions, device, image count, batch size, wall time, images/second, output hash, and peak allocated CUDA bytes reported by the RGB backend.
+On a clean environment, install both requirements files, acquire and verify the frozen artifacts above, run the canonical command on the shared fixture twice, and compare SHA-256 hashes. Run the opt-in real-artifact gate with `SUBMISSION_REAL_BUNDLE_DIR`, `SUBMISSION_REAL_RGB_CHECKPOINT`, and `SUBMISSION_REAL_SIGNAL_MODEL` set:
 
-The real Issue #7 generation, RGB checkpoint, and signal model are ignored runtime artifacts and are not present in this checkout. Consequently no honest real-fixture CPU/GPU throughput, peak-memory, parity delta, or prediction hash can be published until those artifacts are supplied on this machine.
+```powershell
+python -m unittest tests.test_submission_inference_real -v
+```
+
+It compares each submitted fixture probability with the canonical RGB experiment path plus the canonical signal representation/model path, using `config/community-forensics-models.json`'s `1e-5` tolerance. It also enforces exact output keys, sorted relative paths, finite unit-interval probabilities, and byte-identical repeated CPU output.
+
+## Single-device acceptance record
+
+The 2026-09-01 acceptance run used Windows 11 `10.0.26200`, Python `3.12.10`, NumPy `2.3.5`, Pillow `12.0.0`, PyTorch `2.8.0+cpu`, timm `1.0.19`, and safetensors `0.6.2`. CUDA was unavailable, so GPU execution was inapplicable and `auto` correctly selected CPU.
+
+On the two checked-in fixture images with batch size 2:
+
+- the opt-in real parity/repeatability test passed in 20.37 seconds;
+- repeated CPU output was byte-identical and matched the canonical expert/evaluation path within `1e-5`;
+- explicit CPU and real `auto` produced SHA-256 `adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3`;
+- a separately profiled CPU process completed in 23.18 seconds (0.086 images/second including interpreter, validation, and model loading) with a peak observed working set of 466,698,240 bytes;
+- explicit unavailable CUDA exited with status 2 and published no output.
+
+The real Issue #7 receipt/bundle, 87,262,324-byte RGB checkpoint, and signal model remain ignored runtime artifacts; no weights, caches, labels, manifests, or image bytes are committed. This project records same-device evidence only.

@@ -1,7 +1,9 @@
 import json
+import hashlib
 import math
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +22,309 @@ class ConstantBackend:
 
 
 class SubmissionInferenceTests(unittest.TestCase):
+    def _deployment_fixture(self, root: Path):
+        provenance = deepcopy(subject.EXPECTED_PROVENANCE)
+        signal_bytes = b"trusted signal model"
+        rgb_bytes = b"trusted rgb checkpoint"
+        signal_sha = hashlib.sha256(signal_bytes).hexdigest()
+        rgb_sha = hashlib.sha256(rgb_bytes).hexdigest()
+        provenance["rgb_checkpoint_sha256"] = rgb_sha
+        bundle = {
+            "bundle_revision": "bundle-test",
+            "selected_fallback_type": "learned-static-fusion",
+            "provenance": provenance,
+            "input_cache_bindings": {
+                "signal_model": {
+                    "path": "upstream/signal-model.json",
+                    "file_sha256": signal_sha,
+                    "checkpoint_revision": provenance["signal_checkpoint_revision"],
+                    "normalization_revision": provenance["signal_normalization_revision"],
+                }
+            },
+            "rgb_normalizer": {
+                "checkpoint_revision": provenance["rgb_checkpoint_revision"],
+                "checkpoint_sha256": rgb_sha,
+                "preprocessing_version": provenance["rgb_preprocessing_version"],
+                "score_direction": provenance["rgb_score_direction"],
+                "shared_observation_preprocessing_version": provenance[
+                    "shared_observation_preprocessing_version"
+                ],
+                "input_resolution": 384,
+                "resize_short_edge": 440,
+            },
+            "rgb_calibrator": {"slope": 1.0, "intercept": 0.0},
+            "signal_calibrator": {"slope": 1.0, "intercept": 0.0},
+            "static_weight": {"rgb_weight": 0.677, "signal_weight": 0.323},
+        }
+        bundle_bytes = (json.dumps(bundle, indent=2) + "\n").encode()
+        bundle_sha = hashlib.sha256(bundle_bytes).hexdigest()
+        artifact_bindings = {
+            name: {
+                "path": name,
+                "file_sha256": "0" * 64,
+            }
+            for name in subject.EXPECTED_GENERATION_ARTIFACTS
+        }
+        artifact_bindings["static-fallback-bundle.json"] = {
+            "path": "static-fallback-bundle.json",
+            "file_sha256": bundle_sha,
+        }
+        receipt = {
+            "completion_schema_version": "static-fallback-completion-v2",
+            "provenance": provenance,
+            "bundle_revision": bundle["bundle_revision"],
+            "bundle_sha256": bundle_sha,
+            "artifacts": artifact_bindings,
+        }
+        receipt_identity = json.dumps(
+            receipt, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        receipt["generation_revision"] = (
+            "static-fallback-generation-v2-"
+            + hashlib.sha256(receipt_identity).hexdigest()
+        )
+        bundle_dir = root / "bundle"
+        bundle_dir.mkdir()
+        (bundle_dir / "static-fallback-bundle.json").write_bytes(bundle_bytes)
+        (bundle_dir / "static-fallback.complete.json").write_text(
+            json.dumps(receipt), encoding="utf-8"
+        )
+        rgb_path = root / "rgb.safetensors"
+        signal_path = root / "signal.json"
+        rgb_path.write_bytes(rgb_bytes)
+        signal_path.write_bytes(signal_bytes)
+        return bundle_dir, rgb_path, signal_path, bundle, receipt, rgb_sha, signal_sha
+
+    def test_deployment_reader_needs_no_evaluation_caches_or_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle_dir, _, _, bundle, receipt, _, _ = self._deployment_fixture(root)
+            with (
+                patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                patch.object(subject, "validate_bundle", return_value=bundle),
+            ):
+                self.assertEqual(subject.load_frozen_bundle(bundle_dir), bundle)
+
+            self.assertEqual(
+                {path.name for path in bundle_dir.iterdir()},
+                {"static-fallback-bundle.json", "static-fallback.complete.json"},
+            )
+
+    def test_deployment_reader_never_opens_poisoned_evaluation_cache_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle_dir, _, _, bundle, receipt, _, _ = self._deployment_fixture(root)
+            original = Path.read_bytes
+
+            def reject_cache_access(path):
+                if "logits" in path.name:
+                    raise AssertionError(f"evaluation cache accessed: {path.name}")
+                return original(path)
+
+            with (
+                patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                patch.object(subject, "validate_bundle", return_value=bundle),
+                patch.object(Path, "read_bytes", reject_cache_access),
+            ):
+                self.assertEqual(subject.load_frozen_bundle(bundle_dir), bundle)
+
+    def test_artifact_gate_rejects_every_frozen_runtime_binding_before_loading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle_dir, rgb_path, signal_path, bundle, receipt, rgb_sha, signal_sha = (
+                self._deployment_fixture(root)
+            )
+            metadata = {
+                "preprocessing_version": bundle["provenance"]["rgb_preprocessing_version"],
+                "score_direction": bundle["provenance"]["rgb_score_direction"],
+                "models": {
+                    "384": {
+                        "revision": bundle["provenance"]["rgb_checkpoint_revision"],
+                        "sha256": rgb_sha,
+                        "input_resolution": 384,
+                        "resize_short_edge": 440,
+                    }
+                },
+            }
+            patches = (
+                patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                patch.object(subject, "RGB_CHECKPOINT_SHA256", rgb_sha),
+                patch.object(subject, "SIGNAL_MODEL_SHA256", signal_sha),
+                patch.object(subject, "validate_bundle", return_value=bundle),
+                patch.object(subject, "load_model_metadata", return_value=metadata),
+            )
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+                self.assertEqual(
+                    subject.validate_submission_artifacts(
+                        bundle_dir, rgb_checkpoint=rgb_path, signal_model=signal_path
+                    ),
+                    bundle,
+                )
+
+                cases = [
+                    ("signal checksum", lambda: signal_path.write_bytes(b"substitute")),
+                    ("RGB checksum", lambda: rgb_path.write_bytes(b"substitute")),
+                ]
+                for message, mutate in cases:
+                    with self.subTest(message=message):
+                        rgb_path.write_bytes(b"trusted rgb checkpoint")
+                        signal_path.write_bytes(b"trusted signal model")
+                        mutate()
+                        with self.assertRaisesRegex(ValueError, "checksum"):
+                            subject.validate_submission_artifacts(
+                                bundle_dir,
+                                rgb_checkpoint=rgb_path,
+                                signal_model=signal_path,
+                            )
+
+    def test_bundle_rejects_rgb_preprocessing_score_and_shared_geometry_substitution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle_dir, _, _, bundle, receipt, _, _ = self._deployment_fixture(root)
+            for field in (
+                "rgb_preprocessing_version",
+                "rgb_score_direction",
+                "shared_observation_preprocessing_version",
+            ):
+                with self.subTest(field=field):
+                    changed = deepcopy(bundle)
+                    changed["provenance"][field] = "substitute"
+                    with (
+                        patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                        patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                        patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                        patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                        patch.object(subject, "validate_bundle", return_value=changed),
+                    ):
+                        with self.assertRaisesRegex(ValueError, "provenance"):
+                            subject.load_frozen_bundle(bundle_dir)
+
+    def test_artifact_gate_rejects_each_model_and_rgb_runtime_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle_dir, rgb_path, signal_path, bundle, receipt, rgb_sha, signal_sha = (
+                self._deployment_fixture(root)
+            )
+            metadata = {
+                "preprocessing_version": bundle["provenance"]["rgb_preprocessing_version"],
+                "score_direction": bundle["provenance"]["rgb_score_direction"],
+                "models": {
+                    "384": {
+                        "revision": bundle["provenance"]["rgb_checkpoint_revision"],
+                        "sha256": rgb_sha,
+                        "input_resolution": 384,
+                        "resize_short_edge": 440,
+                    }
+                },
+            }
+            cases = [
+                ("signal model", "input_cache_bindings", "file_sha256"),
+                ("signal model", "input_cache_bindings", "checkpoint_revision"),
+                ("signal model", "input_cache_bindings", "normalization_revision"),
+                ("RGB", "rgb_normalizer", "checkpoint_revision"),
+                ("RGB", "rgb_normalizer", "checkpoint_sha256"),
+                ("RGB", "rgb_normalizer", "preprocessing_version"),
+                ("RGB", "rgb_normalizer", "score_direction"),
+                ("RGB", "rgb_normalizer", "shared_observation_preprocessing_version"),
+                ("RGB", "rgb_normalizer", "input_resolution"),
+                ("RGB", "rgb_normalizer", "resize_short_edge"),
+            ]
+            for message, section, field in cases:
+                with self.subTest(section=section, field=field):
+                    changed = deepcopy(bundle)
+                    target = (
+                        changed[section]["signal_model"]
+                        if section == "input_cache_bindings"
+                        else changed[section]
+                    )
+                    target[field] = "substitute"
+                    with (
+                        patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                        patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                        patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                        patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                        patch.object(subject, "RGB_CHECKPOINT_SHA256", rgb_sha),
+                        patch.object(subject, "SIGNAL_MODEL_SHA256", signal_sha),
+                        patch.object(subject, "validate_bundle", return_value=changed),
+                        patch.object(subject, "load_model_metadata", return_value=metadata),
+                    ):
+                        with self.assertRaisesRegex(ValueError, message):
+                            subject.validate_submission_artifacts(
+                                bundle_dir,
+                                rgb_checkpoint=rgb_path,
+                                signal_model=signal_path,
+                            )
+
+            runtime_cases = [
+                ("models", "revision"),
+                ("models", "sha256"),
+                ("models", "input_resolution"),
+                ("models", "resize_short_edge"),
+                ("top", "preprocessing_version"),
+                ("top", "score_direction"),
+            ]
+            for section, field in runtime_cases:
+                with self.subTest(runtime_section=section, field=field):
+                    changed_metadata = deepcopy(metadata)
+                    target = (
+                        changed_metadata["models"]["384"]
+                        if section == "models"
+                        else changed_metadata
+                    )
+                    target[field] = "substitute"
+                    with (
+                        patch.object(subject, "BUNDLE_SHA256", receipt["bundle_sha256"]),
+                        patch.object(subject, "BUNDLE_REVISION", bundle["bundle_revision"]),
+                        patch.object(subject, "GENERATION_REVISION", receipt["generation_revision"]),
+                        patch.object(subject, "EXPECTED_PROVENANCE", bundle["provenance"]),
+                        patch.object(subject, "RGB_CHECKPOINT_SHA256", rgb_sha),
+                        patch.object(subject, "SIGNAL_MODEL_SHA256", signal_sha),
+                        patch.object(subject, "validate_bundle", return_value=bundle),
+                        patch.object(subject, "load_model_metadata", return_value=changed_metadata),
+                    ):
+                        with self.assertRaisesRegex(ValueError, "RGB"):
+                            subject.validate_submission_artifacts(
+                                bundle_dir,
+                                rgb_checkpoint=rgb_path,
+                                signal_model=signal_path,
+                            )
+
+    def test_non_finite_expert_output_preserves_existing_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (8, 8)).save(root / "a.png")
+            output = root.parent / (root.name + "-non-finite.json")
+            output.write_bytes(b"previous\n")
+            bundle = {
+                "selected_fallback_type": "learned-static-fusion",
+                "rgb_calibrator": {"slope": 1.0, "intercept": 0.0},
+                "signal_calibrator": {"slope": 1.0, "intercept": 0.0},
+                "static_weight": {"rgb_weight": 0.677, "signal_weight": 0.323},
+            }
+            with (
+                patch.object(subject, "load_frozen_bundle", return_value=bundle),
+                patch.object(subject, "_preprocess_signal", return_value=np.zeros(26)),
+                patch.object(subject, "_preprocess_rgb", return_value=np.zeros((3, 384, 384))),
+                self.assertRaisesRegex(ValueError, "non-finite"),
+            ):
+                subject.run_submission(
+                    root,
+                    root,
+                    output,
+                    ConstantBackend([math.nan]),
+                    ConstantBackend([0.0]),
+                )
+            self.assertEqual(output.read_bytes(), b"previous\n")
+
     def test_frozen_policy_uses_both_calibrated_expert_logits(self):
         bundle = {
             "selected_fallback_type": "learned-static-fusion",
