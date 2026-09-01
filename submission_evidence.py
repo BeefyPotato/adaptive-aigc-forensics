@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import stat
 import sys
@@ -63,6 +64,18 @@ PUBLIC_THRESHOLD_FIELDS = (
     "false_positive_rate",
     "false_negative_rate",
 )
+PUBLIC_FAMILY_SEVERITIES = {
+    "clean": ("clean",),
+    "jpeg": ("quality-30", "quality-50", "quality-70", "quality-90"),
+    "blur": ("sigma-0.5", "sigma-1", "sigma-2"),
+    "resize": ("factor-0.25", "factor-0.5"),
+    "noise": ("sigma-0.02", "sigma-0.05", "sigma-0.1"),
+    "color": (
+        "brightness-0.8", "brightness-1.2", "contrast-0.8", "contrast-1.2",
+        "saturation-0.8", "saturation-1.2",
+    ),
+    "crop": ("center-0.8",),
+}
 EXPERT_DECISION_SPECS = {
     "raw-rgb-only": {
         "rgb": ("rgb_logit", "raw-rgb-only"),
@@ -73,6 +86,8 @@ EXPERT_DECISION_SPECS = {
         "signal": ("signal_calibrated_logit", "calibrated-signal-only"),
     },
 }
+SOURCE_ID_PATTERN = re.compile(r"sid-set:[A-Za-z0-9_-]+\Z")
+VARIANT_ID_PATTERN = re.compile(r"variant-v1-[0-9a-f]{64}\Z")
 _AT_FDCWD_LINUX = -100
 _AT_FDCWD_DARWIN = -2
 _RENAME_NOREPLACE = 1
@@ -106,6 +121,17 @@ def _unit_interval_rate(value, field):
     return result
 
 
+def _finite_metric(value, context, *, unit_interval=False, nonnegative=False):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence {context} must be finite.")
+    result = float(value)
+    if unit_interval and not 0.0 <= result <= 1.0:
+        raise ValueError(f"Submission evidence {context} must be in [0, 1].")
+    if nonnegative and result < 0.0:
+        raise ValueError(f"Submission evidence {context} must be nonnegative.")
+    return result
+
+
 def _metrics_with_false_rates(metrics):
     result = copy.deepcopy(metrics)
     threshold = result.get("threshold_diagnostics")
@@ -131,24 +157,85 @@ def _reject_public_logit_fields(value):
             _reject_public_logit_fields(child)
 
 
+def _public_families(value):
+    if not isinstance(value, dict) or set(value) != set(PUBLIC_FAMILY_SEVERITIES):
+        raise ValueError("Submission evidence corruption families are incomplete or unexpected.")
+    public = {}
+    for family, severities in PUBLIC_FAMILY_SEVERITIES.items():
+        entry = value[family]
+        if not isinstance(entry, dict) or set(entry) != {"auroc", "auroc_by_severity"}:
+            raise ValueError("Submission evidence corruption family is invalid.")
+        by_severity = entry["auroc_by_severity"]
+        if not isinstance(by_severity, dict) or set(by_severity) != set(severities):
+            raise ValueError("Submission evidence corruption family severities are invalid.")
+        public[family] = {
+            "auroc": _finite_metric(entry["auroc"], f"{family} AUROC", unit_interval=True),
+            "auroc_by_severity": {
+                severity: _finite_metric(
+                    by_severity[severity], f"{family}/{severity} AUROC", unit_interval=True,
+                )
+                for severity in severities
+            },
+        }
+    return public
+
+
+def _public_worst_family_severity(value, families):
+    if not isinstance(value, dict) or set(value) != {"family", "severity", "auroc"}:
+        raise ValueError("Submission evidence worst family/severity is invalid.")
+    family = value["family"]
+    severity = value["severity"]
+    if family not in PUBLIC_FAMILY_SEVERITIES or family == "clean" or severity not in PUBLIC_FAMILY_SEVERITIES[family]:
+        raise ValueError("Submission evidence worst family/severity is incompatible.")
+    auroc = _finite_metric(value["auroc"], "worst family/severity AUROC", unit_interval=True)
+    if auroc != families[family]["auroc_by_severity"][severity]:
+        raise ValueError("Submission evidence worst family/severity AUROC is incompatible.")
+    return {"family": family, "severity": severity, "auroc": auroc}
+
+
+def _public_threshold(value):
+    if not isinstance(value, dict) or set(value) != set(PUBLIC_THRESHOLD_FIELDS) | {"threshold_logit"}:
+        raise ValueError("Submission evidence public threshold diagnostics are incomplete or unexpected.")
+    if value["status"] != "provisional-internal-validation-only" or value["selection_rule"] != "maximum-youden-j":
+        raise ValueError("Submission evidence public threshold diagnostics are incompatible.")
+    return {
+        "status": value["status"],
+        "selection_rule": value["selection_rule"],
+        **{
+            field: _finite_metric(value[field], field, unit_interval=True)
+            for field in (
+                "balanced_accuracy", "sensitivity", "specificity",
+                "false_positive_rate", "false_negative_rate",
+            )
+        },
+    }
+
+
 def _public_metrics(metrics):
     if not isinstance(metrics, dict):
         raise ValueError("Submission evidence candidate metrics are invalid.")
     try:
+        if set(metrics) != set(PUBLIC_METRIC_FIELDS):
+            raise KeyError
+        families = _public_families(metrics["corruption_families"])
         public = {
-            field: copy.deepcopy(metrics[field])
-            for field in PUBLIC_METRIC_FIELDS
-            if field != "threshold_diagnostics"
-        }
-        threshold = metrics["threshold_diagnostics"]
-        if not isinstance(threshold, dict):
-            raise TypeError
-        public["threshold_diagnostics"] = {
-            field: copy.deepcopy(threshold[field])
-            for field in PUBLIC_THRESHOLD_FIELDS
+            "metric_schema_version": metrics["metric_schema_version"],
+            "evaluation_split": metrics["evaluation_split"],
+            "clean_auroc": _finite_metric(metrics["clean_auroc"], "clean AUROC", unit_interval=True),
+            "corruption_families": families,
+            "mean_corrupted_auroc": _finite_metric(metrics["mean_corrupted_auroc"], "mean corrupted AUROC", unit_interval=True),
+            "all_condition_macro_auroc": _finite_metric(metrics["all_condition_macro_auroc"], "macro AUROC", unit_interval=True),
+            "worst_family_severity": _public_worst_family_severity(metrics["worst_family_severity"], families),
+            "degradation_drop": _finite_metric(metrics["degradation_drop"], "degradation drop"),
+            "degradation_retention": _finite_metric(metrics["degradation_retention"], "degradation retention", nonnegative=True),
+            "threshold_diagnostics": _public_threshold(metrics["threshold_diagnostics"]),
+            "brier_score": _finite_metric(metrics["brier_score"], "Brier score", unit_interval=True),
+            "condition_balanced_brier_score": _finite_metric(metrics["condition_balanced_brier_score"], "condition-balanced Brier score", unit_interval=True),
         }
     except (KeyError, TypeError) as error:
         raise ValueError("Submission evidence candidate metrics are incomplete.") from error
+    if public["metric_schema_version"] != "fusion-candidate-metrics-v1" or public["evaluation_split"] != "internal-validation":
+        raise ValueError("Submission evidence candidate metrics are incompatible.")
     _reject_public_logit_fields(public)
     return public
 
@@ -186,8 +273,12 @@ def _representative_case(row, *, score_field, threshold_logit, expert_decisions)
     family = row.get("condition_family")
     severity = row.get("severity")
     label = row.get("authenticity_label")
+    if not isinstance(source_id, str) or SOURCE_ID_PATTERN.fullmatch(source_id) is None:
+        raise ValueError("Internal-validation row source ID is not canonical.")
+    if not isinstance(variant_id, str) or VARIANT_ID_PATTERN.fullmatch(variant_id) is None:
+        raise ValueError("Internal-validation row variant ID is not canonical.")
     if (
-        not all(isinstance(value, str) and value for value in (source_id, variant_id, family, severity))
+        not all(isinstance(value, str) and value for value in (family, severity))
         or type(label) is not int
         or label not in (0, 1)
     ):
