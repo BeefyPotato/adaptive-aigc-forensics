@@ -295,6 +295,10 @@ Organizer-provided evaluation data is evaluation-only and must not influence tra
 
 Further work includes evaluation on unseen generators and transformations, external calibration studies, and independent organizer-set evaluation without changing the selected system.
 
+## Team member contributions
+
+Chrio Phee and Matt Tan contributed equally to the repository and project deliverables.
+
 ## Attributions
 
 Dataset, upstream model, checkpoint, framework, and library attribution details are recorded in [`docs/submission/attributions.md`](docs/submission/attributions.md). The Community Forensics checkpoint is downloaded separately under its upstream terms; no third-party model weights or restricted dataset images are stored in this repository.

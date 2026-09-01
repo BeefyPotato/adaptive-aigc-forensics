@@ -79,7 +79,8 @@ All performance rows below are **internal validation** and descriptive, not caus
 
 | Person (human-confirmed) | Contribution and reviewed artifact | Approval date | Confirmation source |
 | --- | --- | --- | --- |
-| _Unassigned — do not infer_ | _Describe a specific reviewed contribution_ | _YYYY-MM-DD_ | _Human confirmation_ |
+| Chrio Phee | Equal contribution to the repository and project deliverables | 2026-09-01 | Owner confirmation in project session |
+| Matt Tan | Equal contribution to the repository and project deliverables | 2026-09-01 | Owner confirmation in project session |
 
 ## Release checklist
 

@@ -335,6 +335,27 @@ class SubmissionReadmeTests(unittest.TestCase):
         self.assertIn("descriptive", readme)
         self.assertIn("not a causal", readme)
 
+    def test_readme_and_ledger_record_confirmed_equal_team_contributions(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Team member contributions", readme)
+        self.assertIn(
+            "Chrio Phee and Matt Tan contributed equally to the repository and project deliverables.",
+            readme,
+        )
+        for person in ("Chrio Phee", "Matt Tan"):
+            self.assertIn(
+                f"| {person} | Equal contribution to the repository and project deliverables "
+                "| 2026-09-01 | Owner confirmation in project session |",
+                ledger,
+            )
+        self.assertNotIn("_Unassigned", ledger)
+        self.assertIn(
+            "- [ ] Confirm all team-contribution rows with the people named.",
+            ledger,
+        )
+
     def test_submission_drafts_are_not_part_of_the_public_repository(self) -> None:
         for relative_path in (
             "docs/submission/devpost.md",
