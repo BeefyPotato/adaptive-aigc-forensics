@@ -201,6 +201,25 @@ class SubmissionReportTests(unittest.TestCase):
         for limitation in self.evidence["limitations"]:
             self.assertIn(limitation, svg)
 
+    def test_svg_escapes_dynamic_worst_condition_severity_deterministically(self):
+        from submission_report import render_submission_report
+
+        evidence = copy.deepcopy(self.evidence)
+        severity = "sigma-<&>\"'"
+        evidence["metrics"]["worst_family_severity"]["severity"] = severity
+        self.reset_evidence(evidence)
+        render_submission_report(self.evidence_dir, self.output_dir)
+        first = (self.output_dir / "clean-vs-transformed.svg").read_bytes()
+        render_submission_report(self.evidence_dir, self.output_dir)
+        second = (self.output_dir / "clean-vs-transformed.svg").read_bytes()
+        self.assertEqual(first, second)
+        self.assertIn(b"sigma-&lt;&amp;&gt;&quot;&#x27;", first)
+        parsed = ElementTree.parse(self.output_dir / "clean-vs-transformed.svg")
+        self.assertIn(
+            f"Worst condition: noise / {severity} (AUROC 0.770000)",
+            [element.text for element in parsed.iter() if element.text],
+        )
+
     def test_rejects_missing_extra_or_substituted_limitations(self):
         from submission_report import render_submission_report
 
