@@ -89,6 +89,38 @@ def completed_generation_fixture():
 
 
 class SubmissionEvidenceTests(unittest.TestCase):
+    def test_cli_generation_path_checks_components_before_dotdot_normalization(self):
+        from submission_evidence import normalize_cli_generation_directory
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ordinary = root / "ordinary"
+            target = root / "target"
+            ordinary.mkdir()
+            target.mkdir()
+            inspected = []
+            normalized = normalize_cli_generation_directory(
+                ordinary / ".." / "target", component_validator=inspected.append,
+            )
+            self.assertEqual(normalized, target)
+            self.assertIn(ordinary, inspected)
+            self.assertIn(target, inspected)
+
+    def test_cli_generation_path_rejects_a_symlink_component_canceled_by_dotdot(self):
+        from submission_evidence import normalize_cli_generation_directory
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            redirect = root / "redirect"
+            target.mkdir()
+            try:
+                redirect.symlink_to(target, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"Physical symlink creation is unavailable: {error}")
+            with self.assertRaisesRegex(ValueError, "redirected"):
+                normalize_cli_generation_directory(redirect / ".." / "target")
+
     @patch("submission_evidence.publish_submission_evidence")
     def test_evidence_cli_publishes_and_rejects_missing_arguments(self, publisher):
         import submission_evidence

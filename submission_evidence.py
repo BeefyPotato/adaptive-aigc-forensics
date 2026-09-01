@@ -246,6 +246,40 @@ def _ordinary_directory(path, context):
     return root
 
 
+def _validate_cli_generation_component(path):
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ValueError("Submission evidence generation path component is unreadable.") from error
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & reparse):
+        raise ValueError("Submission evidence generation path component is redirected or invalid.")
+
+
+def normalize_cli_generation_directory(path, *, component_validator=None):
+    """Lexically normalize a CLI path only after checking its original components."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        current = Path(candidate.anchor)
+        components = candidate.parts[1:]
+    else:
+        current = Path.cwd()
+        components = candidate.parts
+    validator = component_validator or _validate_cli_generation_component
+    validator(current)
+    for component in components:
+        if component in ("", "."):
+            continue
+        if component == "..":
+            current = current.parent
+        else:
+            current = current / component
+        validator(current)
+    return current
+
+
 def _exact_inventory(root, expected, context):
     try:
         entries = list(root.iterdir())
@@ -444,7 +478,7 @@ def main(argv=None):
     parser.add_argument("--expected-bundle-sha256", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
     arguments = parser.parse_args(argv)
-    generation_directory = Path(os.path.abspath(arguments.generation_dir))
+    generation_directory = normalize_cli_generation_directory(arguments.generation_dir)
     try:
         completion = publish_submission_evidence(
             generation_directory,

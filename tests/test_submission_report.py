@@ -165,7 +165,24 @@ class SubmissionReportTests(unittest.TestCase):
         svg = (self.output_dir / "clean-vs-transformed.svg").read_text("utf-8")
         self.assertIn("Mean transformed AUROC: 0.796000", svg)
         self.assertIn("Worst condition: noise / sigma-0.1", svg)
-        self.assertIn("Internal validation influenced candidate and threshold selection.", svg)
+        for limitation in self.evidence["limitations"]:
+            self.assertIn(limitation, svg)
+
+    def test_rejects_missing_extra_or_substituted_limitations(self):
+        from submission_report import render_submission_report
+
+        mutations = {
+            "missing": lambda limitations: limitations.pop(),
+            "extra": lambda limitations: limitations.append("Unexpected limitation."),
+            "substituted": lambda limitations: limitations.__setitem__(0, "x" * 10_000),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                evidence = copy.deepcopy(self.evidence)
+                mutate(evidence["limitations"])
+                self.reset_evidence(evidence)
+                with self.assertRaisesRegex(ValueError, "limitations"):
+                    render_submission_report(self.evidence_dir, self.root / f"invalid-limitations-{name}")
 
     def test_report_cli_publishes_and_rejects_invalid_arguments(self):
         command = [sys.executable, "submission_report.py", str(self.evidence_dir), str(self.output_dir)]
@@ -186,7 +203,6 @@ class SubmissionReportTests(unittest.TestCase):
         case["source_id"] = "sid-set:source_safe"
         case["variant_id"] = "variant-v1-" + "5" * 64
         evidence["system_id"] = "system-<&>\"'`|[]*_"
-        evidence["limitations"][0] = "limitation-<&>\"'`|[]*_"
         self.reset_evidence(evidence)
         first = render_submission_report(self.evidence_dir, self.output_dir)
         first_bytes = {

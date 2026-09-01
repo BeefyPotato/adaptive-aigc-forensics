@@ -30,6 +30,12 @@ ERROR_STRATA = (
     "transformed-false-positive",
     "transformed-false-negative",
 )
+CANONICAL_LIMITATIONS = (
+    "Internal validation influenced candidate and threshold selection.",
+    "These results are not organizer, sealed, official, independent-test, or unbiased estimates.",
+    "Upstream checkpoint overlap cannot be disproven.",
+    "The weakest-condition/FPR/FNR discussion is descriptive, not causal.",
+)
 _AT_FDCWD_LINUX = -100
 _AT_FDCWD_DARWIN = -2
 _RENAME_NOREPLACE = 1
@@ -217,8 +223,8 @@ def _validated_evidence(evidence, completion):
     metrics = _validated_metrics(evidence["metrics"])
     errors = _validated_errors(evidence["error_analysis"])
     limitations = evidence["limitations"]
-    if not isinstance(limitations, list) or not limitations or any(not isinstance(value, str) or not value for value in limitations):
-        raise ValueError("Submission evidence limitations are invalid.")
+    if limitations != list(CANONICAL_LIMITATIONS):
+        raise ValueError("Submission evidence limitations are incomplete or incompatible.")
     return {"system_id": system_id, "metrics": metrics, "errors": errors, "limitations": limitations}
 
 
