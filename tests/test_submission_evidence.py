@@ -7,6 +7,7 @@ from unittest.mock import patch
 import tempfile
 import hashlib
 import copy
+import json
 from pathlib import Path
 
 TRUSTED_GENERATION_REVISION = (
@@ -17,30 +18,50 @@ TRUSTED_BUNDLE_SHA256 = "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea5903675
 
 def completed_generation_fixture():
     candidate = {
+        "metric_schema_version": "fusion-candidate-metrics-v1",
+        "evaluation_split": "internal-validation",
         "clean_auroc": 0.981975,
+        "corruption_families": {"clean": {"auroc": 0.981975}},
         "mean_corrupted_auroc": 0.9567506944444445,
         "all_condition_macro_auroc": 0.9603541666666667,
         "worst_family_severity": {
             "family": "noise", "severity": "sigma-0.1", "auroc": 0.810425,
         },
+        "degradation_drop": 0.02522430555555555,
+        "degradation_retention": 0.9743126805106489,
         "threshold_diagnostics": {
+            "status": "provisional-internal-validation-only",
+            "selection_rule": "maximum-youden-j",
+            "balanced_accuracy": 0.875,
             "threshold_logit": 0.0,
             "sensitivity": 0.625,
             "specificity": 0.75,
         },
+        "brier_score": 0.1,
+        "condition_balanced_brier_score": 0.09,
     }
     raw_rgb = {
+        "metric_schema_version": "fusion-candidate-metrics-v1",
+        "evaluation_split": "internal-validation",
         "clean_auroc": 0.97505,
+        "corruption_families": {"clean": {"auroc": 0.97505}},
         "mean_corrupted_auroc": 0.9383100694444444,
         "all_condition_macro_auroc": 0.9435586309523808,
         "worst_family_severity": {
             "family": "noise", "severity": "sigma-0.1", "auroc": 0.732425,
         },
+        "degradation_drop": 0.03673993055555558,
+        "degradation_retention": 0.9623199522531608,
         "threshold_diagnostics": {
+            "status": "provisional-internal-validation-only",
+            "selection_rule": "maximum-youden-j",
+            "balanced_accuracy": 0.85,
             "threshold_logit": 0.0,
             "sensitivity": 0.625,
             "specificity": 0.75,
         },
+        "brier_score": 0.24,
+        "condition_balanced_brier_score": 0.23,
     }
     rows = [
         {
@@ -81,6 +102,12 @@ def completed_generation_fixture():
                 "candidates": {
                     "learned-static-fusion": candidate,
                     "raw-rgb-only": raw_rgb,
+                    "calibrated-rgb-only": {
+                        "threshold_diagnostics": {"threshold_logit": 0.0},
+                    },
+                    "calibrated-signal-only": {
+                        "threshold_diagnostics": {"threshold_logit": -0.2},
+                    },
                 },
             }
         },
@@ -196,6 +223,7 @@ class SubmissionEvidenceTests(unittest.TestCase):
         expected_raw_rgb = copy.deepcopy(
             generation["bundle"]["evaluation"]["candidates"]["raw-rgb-only"]
         )
+        expected_raw_rgb["threshold_diagnostics"].pop("threshold_logit")
         expected_raw_rgb["threshold_diagnostics"].update(
             {"false_positive_rate": 0.25, "false_negative_rate": 0.375}
         )
@@ -217,6 +245,59 @@ class SubmissionEvidenceTests(unittest.TestCase):
         self.assertEqual(threshold["specificity"], 0.75)
         self.assertEqual(threshold["false_positive_rate"], 0.25)
         self.assertEqual(threshold["false_negative_rate"], 0.375)
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_metrics_schema_is_allowlisted_and_logit_free(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        reader.return_value = completed_generation_fixture()
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        self.assertEqual(
+            set(evidence["metrics"]),
+            {
+                "metric_schema_version", "evaluation_split", "clean_auroc",
+                "corruption_families", "mean_corrupted_auroc", "all_condition_macro_auroc",
+                "worst_family_severity", "degradation_drop", "degradation_retention",
+                "threshold_diagnostics", "brier_score", "condition_balanced_brier_score",
+            },
+        )
+        self.assertEqual(
+            set(evidence["metrics"]["threshold_diagnostics"]),
+            {
+                "status", "selection_rule", "balanced_accuracy", "sensitivity", "specificity",
+                "false_positive_rate", "false_negative_rate",
+            },
+        )
+        self.assertNotIn("logit", json.dumps(evidence, sort_keys=True).lower())
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_uses_frozen_nonzero_expert_thresholds_for_correction_status(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        generation = completed_generation_fixture()
+        generation["bundle"]["evaluation"]["candidates"]["raw-rgb-only"]["threshold_diagnostics"]["threshold_logit"] = 0.2
+        row = generation["calibrated_internal_validation_cache"]["records"][0]
+        row.update(
+            authenticity_label=0,
+            rgb_logit=0.3,
+            rgb_calibrated_logit=0.3,
+            signal_calibrated_logit=-0.1,
+        )
+        reader.return_value = generation
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="raw-rgb-only",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        case = evidence["error_analysis"]["representative_cases"]["clean-false-positive"]
+        self.assertEqual(case["expert_agreement"], "agree")
+        self.assertEqual(case["correction_status"], "both-experts-wrong")
 
     @patch("submission_evidence.read_static_fallback_generation")
     def test_evidence_rejects_nonfinite_or_out_of_range_threshold_rates(self, reader):
@@ -312,6 +393,39 @@ class SubmissionEvidenceTests(unittest.TestCase):
         cases = evidence["error_analysis"]["representative_cases"]
         selected = [case for case in cases.values() if case is not None]
         self.assertEqual(len({case["source_id"] for case in selected}), len(selected))
+        self.assertEqual(cases, reversed_evidence["error_analysis"]["representative_cases"])
+
+    @patch("submission_evidence.read_static_fallback_generation")
+    def test_evidence_maximizes_source_unique_representative_strata(self, reader):
+        from submission_evidence import build_submission_evidence
+
+        generation = completed_generation_fixture()
+        rows = [dict(row) for row in generation["calibrated_internal_validation_cache"]["records"]]
+        rows[0].update(source_id="x", variant_id="clean-fp-x")
+        rows[2].update(source_id="x", variant_id="noise-fp-x")
+        rows.append(dict(rows[0], source_id="y", variant_id="clean-fp-y-0"))
+        generation["calibrated_internal_validation_cache"]["records"] = rows
+        reader.return_value = generation
+        evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        reader.return_value = {
+            **generation,
+            "calibrated_internal_validation_cache": {"records": list(reversed(rows))},
+        }
+        reversed_evidence = build_submission_evidence(
+            "frozen-generation",
+            candidate="learned-static-fusion",
+            expected_generation_revision=TRUSTED_GENERATION_REVISION,
+            expected_bundle_sha256=TRUSTED_BUNDLE_SHA256,
+        )
+        cases = evidence["error_analysis"]["representative_cases"]
+        self.assertEqual(cases["clean-false-positive"]["source_id"], "y")
+        self.assertEqual(cases["transformed-false-positive"]["source_id"], "x")
+        self.assertTrue(all(case is not None for case in cases.values()))
         self.assertEqual(cases, reversed_evidence["error_analysis"]["representative_cases"])
 
     @patch("submission_evidence.read_static_fallback_generation")

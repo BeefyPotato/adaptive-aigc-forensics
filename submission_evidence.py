@@ -40,6 +40,39 @@ EVIDENCE_FILENAME = "submission-evidence.json"
 COMPLETION_FILENAME = "submission-evidence.complete.json"
 COMPLETION_SCHEMA_VERSION = "submission-evidence-completion-v1"
 EVIDENCE_GENERATION_PREFIX = "submission-evidence-generation-v1"
+PUBLIC_METRIC_FIELDS = (
+    "metric_schema_version",
+    "evaluation_split",
+    "clean_auroc",
+    "corruption_families",
+    "mean_corrupted_auroc",
+    "all_condition_macro_auroc",
+    "worst_family_severity",
+    "degradation_drop",
+    "degradation_retention",
+    "threshold_diagnostics",
+    "brier_score",
+    "condition_balanced_brier_score",
+)
+PUBLIC_THRESHOLD_FIELDS = (
+    "status",
+    "selection_rule",
+    "balanced_accuracy",
+    "sensitivity",
+    "specificity",
+    "false_positive_rate",
+    "false_negative_rate",
+)
+EXPERT_DECISION_SPECS = {
+    "raw-rgb-only": {
+        "rgb": ("rgb_logit", "raw-rgb-only"),
+        "signal": ("signal_calibrated_logit", "calibrated-signal-only"),
+    },
+    "learned-static-fusion": {
+        "rgb": ("rgb_calibrated_logit", "calibrated-rgb-only"),
+        "signal": ("signal_calibrated_logit", "calibrated-signal-only"),
+    },
+}
 _AT_FDCWD_LINUX = -100
 _AT_FDCWD_DARWIN = -2
 _RENAME_NOREPLACE = 1
@@ -85,7 +118,69 @@ def _metrics_with_false_rates(metrics):
     return result
 
 
-def _representative_case(row, *, score_field, threshold_logit):
+def _reject_public_logit_fields(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Submission evidence public metrics contain a non-string field.")
+            if "logit" in key.lower():
+                raise ValueError("Submission evidence public metrics must not contain logits.")
+            _reject_public_logit_fields(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_public_logit_fields(child)
+
+
+def _public_metrics(metrics):
+    if not isinstance(metrics, dict):
+        raise ValueError("Submission evidence candidate metrics are invalid.")
+    try:
+        public = {
+            field: copy.deepcopy(metrics[field])
+            for field in PUBLIC_METRIC_FIELDS
+            if field != "threshold_diagnostics"
+        }
+        threshold = metrics["threshold_diagnostics"]
+        if not isinstance(threshold, dict):
+            raise TypeError
+        public["threshold_diagnostics"] = {
+            field: copy.deepcopy(threshold[field])
+            for field in PUBLIC_THRESHOLD_FIELDS
+        }
+    except (KeyError, TypeError) as error:
+        raise ValueError("Submission evidence candidate metrics are incomplete.") from error
+    _reject_public_logit_fields(public)
+    return public
+
+
+def _finite_threshold(value, context):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"Submission evidence {context} must be finite.")
+    return float(value)
+
+
+def _expert_decisions(bundle, candidate):
+    try:
+        specifications = EXPERT_DECISION_SPECS[candidate]
+        candidates = bundle["evaluation"]["candidates"]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Submission evidence expert decision semantics are unavailable.") from error
+    decisions = {}
+    for expert, (score_field, candidate_name) in specifications.items():
+        try:
+            threshold = candidates[candidate_name]["threshold_diagnostics"]["threshold_logit"]
+        except (KeyError, TypeError) as error:
+            raise ValueError(
+                f"Submission evidence {expert} decision threshold is unavailable."
+            ) from error
+        decisions[expert] = {
+            "score_field": score_field,
+            "threshold_logit": _finite_threshold(threshold, f"{expert} decision threshold"),
+        }
+    return decisions
+
+
+def _representative_case(row, *, score_field, threshold_logit, expert_decisions):
     source_id = row.get("source_id")
     variant_id = row.get("variant_id")
     family = row.get("condition_family")
@@ -112,8 +207,14 @@ def _representative_case(row, *, score_field, threshold_logit):
             }
         )
     ).hexdigest()
-    rgb_prediction = _finite_score(row, "rgb_calibrated_logit") >= 0.0
-    signal_prediction = _finite_score(row, "signal_calibrated_logit") >= 0.0
+    rgb_prediction = (
+        _finite_score(row, expert_decisions["rgb"]["score_field"])
+        >= expert_decisions["rgb"]["threshold_logit"]
+    )
+    signal_prediction = (
+        _finite_score(row, expert_decisions["signal"]["score_field"])
+        >= expert_decisions["signal"]["threshold_logit"]
+    )
     rgb_correct = rgb_prediction == bool(label)
     signal_correct = signal_prediction == bool(label)
     if not rgb_correct and signal_correct:
@@ -136,18 +237,88 @@ def _representative_case(row, *, score_field, threshold_logit):
     }
 
 
-def build_from_rows(rows, *, candidate="learned-static-fusion", threshold_logit=0.0):
+def _maximum_matching_size(candidates_by_stratum, strata, unavailable_sources):
+    matched_source_to_stratum = {}
+
+    def assign(stratum, visited_sources):
+        for case in candidates_by_stratum[stratum]:
+            source_id = case["source_id"]
+            if source_id in unavailable_sources or source_id in visited_sources:
+                continue
+            visited_sources.add(source_id)
+            previous = matched_source_to_stratum.get(source_id)
+            if previous is None or assign(previous, visited_sources):
+                matched_source_to_stratum[source_id] = stratum
+                return True
+        return False
+
+    return sum(assign(stratum, set()) for stratum in strata)
+
+
+def _maximum_cardinality_representatives(by_source):
+    candidates_by_stratum = {
+        stratum: sorted(
+            (case for (case_stratum, _), case in by_source.items() if case_stratum == stratum),
+            key=lambda case: case["rank"],
+        )
+        for stratum in ERROR_STRATA
+    }
+    maximum_cardinality = _maximum_matching_size(
+        candidates_by_stratum, ERROR_STRATA, set(),
+    )
+    selected_sources = set()
+    selected_count = 0
+    representatives = {}
+    for index, stratum in enumerate(ERROR_STRATA):
+        remaining = ERROR_STRATA[index + 1:]
+        representative = None
+        for case in candidates_by_stratum[stratum]:
+            source_id = case["source_id"]
+            if source_id in selected_sources:
+                continue
+            feasible_count = selected_count + 1 + _maximum_matching_size(
+                candidates_by_stratum, remaining, selected_sources | {source_id},
+            )
+            if feasible_count == maximum_cardinality:
+                representative = case
+                break
+        if representative is not None:
+            selected_sources.add(representative["source_id"])
+            selected_count += 1
+        elif (
+            selected_count
+            + _maximum_matching_size(candidates_by_stratum, remaining, selected_sources)
+            != maximum_cardinality
+        ):
+            raise ValueError("Submission evidence representative allocation is inconsistent.")
+        representatives[stratum] = representative
+    return representatives
+
+
+def build_from_rows(
+    rows,
+    *,
+    candidate="learned-static-fusion",
+    threshold_logit=0.0,
+    expert_decisions=None,
+):
     """Allocate deterministic, globally source-unique sanitized error representatives."""
     if candidate not in CANDIDATE_SCORE_FIELDS:
         raise ValueError("Submission candidate must be raw-rgb-only or learned-static-fusion.")
     if isinstance(threshold_logit, bool) or not isinstance(threshold_logit, (int, float)) or not math.isfinite(threshold_logit):
         raise ValueError("Submission evidence threshold must be finite.")
+    if expert_decisions is None:
+        expert_decisions = {
+            "rgb": {"score_field": "rgb_calibrated_logit", "threshold_logit": 0.0},
+            "signal": {"score_field": "signal_calibrated_logit", "threshold_logit": 0.0},
+        }
     by_source = {}
     for row in rows:
         result = _representative_case(
             row,
             score_field=CANDIDATE_SCORE_FIELDS[candidate],
             threshold_logit=float(threshold_logit),
+            expert_decisions=expert_decisions,
         )
         if result is None:
             continue
@@ -155,21 +326,7 @@ def build_from_rows(rows, *, candidate="learned-static-fusion", threshold_logit=
         key = (stratum, case["source_id"])
         if key not in by_source or case["rank"] < by_source[key]["rank"]:
             by_source[key] = case
-    selected_sources = set()
-    representatives = {}
-    for stratum in ERROR_STRATA:
-        candidates = sorted(
-            (case for (case_stratum, _), case in by_source.items() if case_stratum == stratum),
-            key=lambda case: case["rank"],
-        )
-        representative = next(
-            (case for case in candidates if case["source_id"] not in selected_sources),
-            None,
-        )
-        representatives[stratum] = representative
-        if representative is not None:
-            selected_sources.add(representative["source_id"])
-    return representatives
+    return _maximum_cardinality_representatives(by_source)
 
 
 def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, rows):
@@ -188,11 +345,14 @@ def _evidence_from_validated_inputs(*, completion, bundle, candidate, metrics, r
             "source_count": bundle["evaluation"]["source_count"],
             "observation_count": bundle["evaluation"]["observation_count"],
         },
-        "metrics": evidence_metrics,
+        "metrics": _public_metrics(evidence_metrics),
         "error_analysis": {
             "selection_rule": ERROR_RANKING_VERSION,
             "representative_cases": build_from_rows(
-                rows, candidate=candidate, threshold_logit=threshold,
+                rows,
+                candidate=candidate,
+                threshold_logit=threshold,
+                expert_decisions=_expert_decisions(bundle, candidate),
             ),
         },
         "limitations": list(LIMITATIONS),
