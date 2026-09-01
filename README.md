@@ -180,10 +180,8 @@ The Community Forensics checkpoint is frozen and its public metadata cannot prov
 
 ## Public submission links
 
-- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics — **HUMAN REQUIRED:** make the repository public and verify it while signed out.
-- YouTube demo URL: **HUMAN REQUIRED** after recording and upload.
-- Devpost project URL: **HUMAN REQUIRED** after submission publication.
+- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics
+- YouTube demo URL: https://www.youtube.com/watch?v=hDQRTiwCYZo
+- Devpost project URL: https://devpost.com/software/adaptive-aigc-forensics
 
-## Contributions
 
-Contribution authorship must be confirmed by the human team before publication. Use the role-based record in [the claim ledger](docs/submission/claim-ledger.md) to map a person, their reviewed contribution, and approval date. This repository intentionally does not infer or assign individual contributions.
