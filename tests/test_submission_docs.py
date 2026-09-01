@@ -171,8 +171,6 @@ class SubmissionReadmeTests(unittest.TestCase):
 
     def test_readme_uses_domain_language_and_documents_compute_and_data_flow(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
-        demo = (ROOT / "docs/submission/demo-script.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
 
         for term in (
@@ -196,7 +194,7 @@ class SubmissionReadmeTests(unittest.TestCase):
             "frequency/residual representation",
         ):
             self.assertNotIn(avoided_term, readme)
-        for document in (readme, devpost, demo, ledger):
+        for document in (readme, ledger):
             self.assertIn(FUSION_GENERATION_REVISION, document)
 
         for ledger_binding in (
@@ -251,7 +249,6 @@ class SubmissionReadmeTests(unittest.TestCase):
 
     def test_readme_is_public_facing_and_lists_submission_deliverables(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
 
         self.assertIn("## Submission deliverables", readme)
         for relative_path in (
@@ -291,76 +288,47 @@ class SubmissionReadmeTests(unittest.TestCase):
         ):
             self.assertNotIn(internal_phrase, readme)
 
-        for document in (readme, devpost):
-            for result in (
-                "768/1218 = 0.6305418719211823",
-                "0.016795535714285936",
-                "[0.011076105794972707, 0.0234869800759804]",
-            ):
-                self.assertIn(result, document)
-            self.assertIn("descriptive", document)
-            self.assertIn("not a causal", document)
+        for result in (
+            "768/1218 = 0.6305418719211823",
+            "0.016795535714285936",
+            "[0.011076105794972707, 0.0234869800759804]",
+        ):
+            self.assertIn(result, readme)
+        self.assertIn("descriptive", readme)
+        self.assertIn("not a causal", readme)
+
+    def test_submission_drafts_are_not_part_of_the_public_repository(self) -> None:
+        for relative_path in (
+            "docs/submission/devpost.md",
+            "docs/submission/demo-script.md",
+        ):
+            with self.subTest(relative_path=relative_path):
+                self.assertFalse((ROOT / relative_path).exists())
+                tracked = subprocess.run(
+                    ["git", "ls-files", "--error-unmatch", relative_path],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(tracked.returncode, 0)
 
 
 class SubmissionPackageTests(unittest.TestCase):
-    def test_devpost_uses_required_headings_and_selected_fusion_design(self) -> None:
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
-
-        for heading in (
-            "# Adaptive AIGC Forensics",
-            "## Problem and solution",
-            "## Technical implementation",
-            "## Development tools",
-            "## Models and APIs",
-            "## Libraries and frameworks",
-            "## Datasets and assets",
-            "## Robustness and error analysis",
-            "## Innovation and complementary value",
-            "## Impact and feasibility",
-            "## Limitations and next steps",
-            "## Team contributions",
-            "## Demo and repository",
-        ):
-            self.assertIn(heading, devpost)
-        self.assertIn("learned-static-fusion", devpost)
-        self.assertIn("0.677 RGB / 0.323 signal", devpost)
-        self.assertIn("cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5", devpost)
-        self.assertEqual(devpost.count(CANONICAL_COMMAND), 1)
-        self.assertIn(ISSUE10_COMMIT, devpost)
-        self.assertIn("internal validation", devpost)
-        self.assertIn("training, calibration, any selection, weights, thresholds, templates, or narrative", devpost)
-        self.assertNotIn("current raw RGB-only candidate", devpost)
-        self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", devpost)
-        self.assertNotIn("](attributions.md)", devpost)
-        self.assertNotIn("](../data-sources.md)", devpost)
-        self.assertNotIn("](claim-ledger.md)", devpost)
-        self.assertNotIn("](demo-script.md)", devpost)
-        for public_link in (
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/attributions.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/data-sources.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/claim-ledger.md",
-            "https://github.com/BeefyPotato/adaptive-aigc-forensics/blob/main/docs/submission/demo-script.md",
-        ):
-            self.assertIn(public_link, devpost)
-
     def test_accepted_fusion_interface_preserves_the_submission_output_contract(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         self.assertIn("learned-static-fusion", readme)
         self.assertIn(PUBLIC_README_COMMAND, readme)
-        for document in (devpost, ledger):
-            self.assertIn("learned-static-fusion", document)
-            self.assertIn(CANONICAL_COMMAND, document)
-            self.assertIn(ISSUE10_COMMIT, document)
+        self.assertIn("learned-static-fusion", ledger)
+        self.assertIn(CANONICAL_COMMAND, ledger)
+        self.assertIn(ISSUE10_COMMIT, ledger)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
-        self.assertIn('`{ "image_path": string, "pred": number }`', devpost)
         self.assertIn("exactly `image_path` and `pred`", ledger)
 
     def test_supporting_documents_preserve_provenance_and_human_review_gates(self) -> None:
         attributions = (ROOT / "docs" / "submission" / "attributions.md").read_text(encoding="utf-8")
-        demo = (ROOT / "docs" / "submission" / "demo-script.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         for name in (
@@ -368,11 +336,6 @@ class SubmissionPackageTests(unittest.TestCase):
             "Hugging Face", "timm", "safetensors", "Node.js", "Sharp",
         ):
             self.assertIn(name, attributions)
-        self.assertIn("120-second", demo)
-        self.assertIn("learned-static-fusion", demo)
-        self.assertIn("0.677 RGB / 0.323 signal", demo)
-        self.assertIn(CANONICAL_COMMAND, demo)
-        self.assertIn("internal validation", demo)
         self.assertIn("Human contribution record", ledger)
         self.assertIn("Bundle SHA-256", ledger)
         self.assertIn("Final accepted command", ledger)
@@ -390,12 +353,9 @@ class SubmissionPackageTests(unittest.TestCase):
         self.assertIn("9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2", ledger)
         self.assertIn("cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5", ledger)
         self.assertIn("static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b", ledger)
-        self.assertIn("claim-ledger-complete and human-reviewed", demo)
 
     def test_final_fusion_evidence_is_linked_and_bound_to_cli_acceptance(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
-        demo = (ROOT / "docs" / "submission" / "demo-script.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
         for path in (
@@ -407,16 +367,14 @@ class SubmissionPackageTests(unittest.TestCase):
         ):
             self.assertIn(path, ledger)
         self.assertIn("docs/submission/results/robustness-and-errors.md", readme)
-        self.assertIn("docs/submission/results/clean-vs-transformed.svg", devpost)
-        self.assertIn("docs/submission/results/clean-vs-transformed.svg", demo)
 
         for metric in (
-            "0.981975", "0.9567506944444445", "0.9603541666666667",
-            "noise / sigma-0.1 / 0.810425", "0.09982875909583232",
-            "0.09680062702417022", "0.87625", "0.08399999999999996",
-            "0.16349999999999998",
+            "0.981975",
+            "0.9567506944444445",
+            "0.9603541666666667",
+            "noise / sigma-0.1 / 0.810425",
         ):
-            self.assertIn(metric, devpost)
+            self.assertIn(metric, readme)
         for binding in (
             "submission-evidence-generation-v1-b018d8f0326f8a9ed9945b52eda2dadeae659b3827268af69c38aa4c09e27cc1",
             "submission-report-generation-v1-411d7380b4667552401f4f751472836d7d3186854f50694dff5039ce0c19e796",
