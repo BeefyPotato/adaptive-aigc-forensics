@@ -36,16 +36,11 @@ class SubmissionInferenceCliTests(unittest.TestCase):
                 "--output", str(output), "--device", "cpu",
             ]
             with (
-                patch.object(subject, "validate_submission_artifacts", return_value={}),
-                patch.object(subject, "_cuda_is_available", side_effect=AssertionError("CUDA probed")),
-                patch.object(subject, "CommunityForensicsBackend") as rgb,
-                patch.object(subject, "SignalModelBackend") as signal,
-                patch.object(subject, "run_submission") as run,
+                patch.object(subject, "run_submission_inference", return_value=[]) as run,
             ):
                 self.assertEqual(subject.main(argv), 0)
-            rgb.assert_called_once()
-            signal.assert_called_once()
             run.assert_called_once()
+            self.assertEqual(run.call_args.kwargs["device"], "cpu")
 
     def test_unavailable_explicit_cuda_fails_before_artifact_or_model_loading(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,16 +52,15 @@ class SubmissionInferenceCliTests(unittest.TestCase):
                 "--output", str(root / "predictions.json"), "--device", "cuda",
             ]
             with (
-                patch.object(subject, "_cuda_is_available", return_value=False),
-                patch.object(subject, "validate_submission_artifacts") as validate,
-                patch.object(subject, "CommunityForensicsBackend") as rgb,
-                patch.object(subject, "SignalModelBackend") as signal,
+                patch.object(
+                    subject,
+                    "run_submission_inference",
+                    side_effect=ValueError("CUDA was explicitly requested but is unavailable."),
+                ) as run,
                 self.assertRaises(SystemExit),
             ):
                 subject.main(argv)
-            validate.assert_not_called()
-            rgb.assert_not_called()
-            signal.assert_not_called()
+            run.assert_called_once()
             self.assertFalse((root / "predictions.json").exists())
 
 

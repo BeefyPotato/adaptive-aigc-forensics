@@ -15,9 +15,24 @@ from fusion_pipeline import (
     calibrated_logit,
     validate_bundle,
 )
-from rgb_expert import discover_images, load_model_metadata, preprocess_image
+from rgb_expert import (
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    CommunityForensicsBackend,
+    discover_images,
+    load_model_metadata,
+    preprocess_image,
+)
 from safe_output import atomic_write_bytes
-from signal_expert import decode_expert_rgb, extract_signal_representation
+from shared_observation import (
+    SHARED_EXPERT_GEOMETRY,
+    SHARED_OBSERVATION_PREPROCESSING_VERSION,
+)
+from signal_expert import (
+    decode_expert_rgb,
+    extract_signal_representation,
+    read_model_bundle,
+)
 
 
 GENERATION_REVISION = "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
@@ -37,7 +52,7 @@ EXPECTED_PROVENANCE = {
     "rgb_checkpoint_sha256": RGB_CHECKPOINT_SHA256,
     "rgb_preprocessing_version": "community-forensics-eval-v1",
     "rgb_score_direction": "positive-logit-means-ai-generated",
-    "shared_observation_preprocessing_version": "shared-preprocessing-v1",
+    "shared_observation_preprocessing_version": SHARED_OBSERVATION_PREPROCESSING_VERSION,
     "signal_acceptance_scope": "issue-6-timeboxed-acceptance",
     "signal_checkpoint_revision": "signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e",
     "signal_experiment_profile": "hackathon-v1",
@@ -57,6 +72,35 @@ EXPECTED_GENERATION_ARTIFACTS = {
 
 class LogitBackend(Protocol):
     def predict_logits(self, batch: np.ndarray) -> np.ndarray: ...
+
+
+class SignalModelBackend:
+    """Validated frozen signal model adapter for the public inference entry point."""
+
+    def __init__(self, path: Path, bundle: dict):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self._model, validated = read_model_bundle(
+            path,
+            manifest_metadata=payload.get("manifest_metadata"),
+            expected_experiment_provenance=payload.get("experiment_provenance"),
+        )
+        provenance = bundle.get("provenance", {})
+        expected = {
+            "checkpoint_revision": provenance.get("signal_checkpoint_revision"),
+            "normalization_revision": provenance.get("signal_normalization_revision"),
+        }
+        if any(
+            expected[key] is not None and validated.get(key) != value
+            for key, value in expected.items()
+        ):
+            raise ValueError("Signal model does not match frozen bundle provenance.")
+        normalization = validated["normalization"]
+        self._mean = np.asarray(normalization["mean"], dtype=np.float64)
+        self._scale = np.asarray(normalization["scale"], dtype=np.float64)
+
+    def predict_logits(self, batch: np.ndarray) -> np.ndarray:
+        values = np.asarray(batch, dtype=np.float64)
+        return self._model.logits((values - self._mean) / self._scale)
 
 
 def _canonical_sha256(value: object) -> str:
@@ -232,9 +276,17 @@ def validate_submission_artifacts(
         "checkpoint_sha256": model.get("sha256"),
         "preprocessing_version": metadata.get("preprocessing_version"),
         "score_direction": metadata.get("score_direction"),
-        "shared_observation_preprocessing_version": "shared-preprocessing-v1",
+        "shared_observation_preprocessing_version": (
+            SHARED_OBSERVATION_PREPROCESSING_VERSION
+        ),
         "input_resolution": model.get("input_resolution"),
         "resize_short_edge": model.get("resize_short_edge"),
+        "center_crop": [384, 384],
+        "resize_interpolation": "bilinear",
+        "channel_order": "rgb",
+        "input_range": [0.0, 1.0],
+        "tensor_dtype": "float32",
+        "tensor_layout": "chw",
     }
     expected_frozen = {
         "checkpoint_revision": EXPECTED_PROVENANCE["rgb_checkpoint_revision"],
@@ -246,10 +298,47 @@ def validate_submission_artifacts(
         ],
         "input_resolution": 384,
         "resize_short_edge": 440,
+        "center_crop": [384, 384],
+        "resize_interpolation": "bilinear",
+        "channel_order": "rgb",
+        "input_range": [0.0, 1.0],
+        "tensor_dtype": "float32",
+        "tensor_layout": "chw",
     }
     normalizer = bundle.get("rgb_normalizer", {})
-    if expected_runtime != expected_frozen or any(
-        normalizer.get(key) != value for key, value in expected_frozen.items()
+    try:
+        runtime_normalization_matches = (
+            np.array_equal(
+                np.asarray(normalizer.get("mean"), dtype=np.float32),
+                IMAGENET_MEAN.reshape(-1),
+            )
+            and np.array_equal(
+                np.asarray(normalizer.get("scale"), dtype=np.float32),
+                IMAGENET_STD.reshape(-1),
+            )
+        )
+    except (TypeError, ValueError):
+        runtime_normalization_matches = False
+    provenance = bundle.get("provenance", {})
+    runtime_provenance_matches = all(
+        provenance.get(provenance_key) == expected_runtime[runtime_key]
+        for provenance_key, runtime_key in (
+            ("rgb_checkpoint_revision", "checkpoint_revision"),
+            ("rgb_checkpoint_sha256", "checkpoint_sha256"),
+            ("rgb_preprocessing_version", "preprocessing_version"),
+            ("rgb_score_direction", "score_direction"),
+            (
+                "shared_observation_preprocessing_version",
+                "shared_observation_preprocessing_version",
+            ),
+        )
+    )
+    if (
+        expected_runtime != expected_frozen
+        or SHARED_EXPERT_GEOMETRY.get(384) != expected_frozen["resize_short_edge"]
+        or not runtime_normalization_matches
+        or not runtime_provenance_matches
+        or any(normalizer.get(key) != value for key, value in expected_frozen.items())
     ):
         raise ValueError("Frozen RGB checkpoint/preprocessing binding is incompatible.")
     if _sha256_file(Path(rgb_checkpoint), "Frozen RGB checkpoint") != RGB_CHECKPOINT_SHA256:
@@ -291,7 +380,7 @@ def _backend_logits(backend: LogitBackend, batch: np.ndarray, expected: int, exp
     return values
 
 
-def run_submission(
+def _run_submission_with_backends(
     image_directory: Path | str,
     generation_directory: Path | str,
     output_path: Path | str,
@@ -331,6 +420,51 @@ def run_submission(
     destination.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(destination, payload)
     return records
+
+
+def _cuda_is_available() -> bool:
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
+def run_submission_inference(
+    image_directory: Path | str,
+    *,
+    frozen_generation_directory: Path | str,
+    rgb_checkpoint: Path | str,
+    signal_model: Path | str,
+    output_path: Path | str,
+    device: str = "auto",
+    batch_size: int = 8,
+) -> list[dict]:
+    """Validate the deployment contract, construct both experts, and publish predictions."""
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("Batch size must be a positive integer.")
+    if device not in SUPPORTED_DEVICES:
+        raise ValueError("Device must be one of auto, cpu, or cuda.")
+    selected_device = (
+        "cpu"
+        if device == "cpu"
+        else resolve_device(device, cuda_available=_cuda_is_available())
+    )
+    bundle = validate_submission_artifacts(
+        frozen_generation_directory,
+        rgb_checkpoint=rgb_checkpoint,
+        signal_model=signal_model,
+    )
+    rgb_backend = CommunityForensicsBackend(
+        Path(rgb_checkpoint), resolution=384, device=selected_device
+    )
+    signal_backend = SignalModelBackend(Path(signal_model), bundle)
+    return _run_submission_with_backends(
+        image_directory,
+        frozen_generation_directory,
+        output_path,
+        rgb_backend,
+        signal_backend,
+        batch_size=batch_size,
+    )
 
 
 def resolve_device(requested: str, *, cuda_available: bool) -> str:

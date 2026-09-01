@@ -17,7 +17,7 @@ python submission_inference_cli.py `
 
 Install the pinned signal and RGB requirements and use Python 3.12. The first RGB checkpoint acquisition may require network access; after the revision-pinned checkpoint, signal model, and complete generation directory are present, inference is fully offline. Checkpoint acquisition uses `rgb_expert.download_checkpoint`, which verifies the SHA-256 from `config/community-forensics-models.json`.
 
-The deployment bundle directory needs only `static-fallback.complete.json` and `static-fallback-bundle.json`; training labels, corruption manifests, matched logits, and calibrated evaluation caches are not inference dependencies. The receipt still binds the complete Issue #7 generation inventory, while the deployment reader deliberately opens only the receipt and bundle. It validates their content-derived revisions, the bundle checksum, calibrators, static weight, normalizers, preprocessing contract, and expert revisions. It additionally pins:
+The deployment bundle directory requires only `static-fallback.complete.json` and `static-fallback-bundle.json`; training labels, corruption manifests, matched logits, and calibrated evaluation caches are not inference dependencies. The receipt still binds the complete Issue #7 generation inventory, while the deployment reader deliberately opens only the receipt and bundle. It validates their content-derived revisions, the bundle checksum, calibrators, static weight, normalizers, preprocessing contract, and expert revisions. It additionally pins:
 
 - generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181`;
 - bundle `static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179`;
@@ -28,7 +28,9 @@ The deployment bundle directory needs only `static-fallback.complete.json` and `
 - RGB checkpoint revision, 384/440 geometry, ImageNet normalization, preprocessing version, score direction, and shared-observation preprocessing version;
 - calibrated-logit weights `0.677` RGB and `0.323` signal.
 
-Both model files and every runtime binding are verified before either model is constructed. Any substituted checkpoint, signal model, receipt, bundle, preprocessing contract, score direction, or shared geometry fails closed.
+Both model files and every runtime binding are verified before either model is constructed. Runtime validation reads the exported shared-observation preprocessing revision and geometry map plus the RGB expert's actual ImageNet mean/scale arrays; it does not trust a second set of local preprocessing strings. Any substituted checkpoint, signal model, receipt, bundle, preprocessing contract, score direction, normalization, or shared geometry fails closed.
+
+The public Python entry point is `submission_inference.run_submission_inference(...)`. It owns artifact validation, device resolution, both model constructors, recursive inference, and atomic publication. The command-line adapter routes exclusively through this entry point.
 
 ## Input and output behavior
 
@@ -46,7 +48,7 @@ On a clean environment, install both requirements files, acquire and verify the 
 python -m unittest tests.test_submission_inference_real -v
 ```
 
-It compares each submitted fixture probability with the canonical RGB experiment path plus the canonical signal representation/model path, using `config/community-forensics-models.json`'s `1e-5` tolerance. It also enforces exact output keys, sorted relative paths, finite unit-interval probabilities, and byte-identical repeated CPU output.
+It compares each submitted probability with the canonical RGB experiment path plus the canonical signal representation/model and calibrated-fusion path, using `config/community-forensics-models.json`'s `1e-5` tolerance. Set `SUBMISSION_REAL_IMAGE_DIR` to run the same gate on an ignored local sample directory. The test also enforces exact output keys, sorted relative paths, finite unit-interval probabilities, and byte-identical repeated CPU output.
 
 ## Single-device acceptance record
 
@@ -55,9 +57,20 @@ The 2026-09-01 acceptance run used Windows 11 `10.0.26200`, Python `3.12.10`, Nu
 On the two checked-in fixture images with batch size 2:
 
 - the opt-in real parity/repeatability test passed in 20.37 seconds;
-- repeated CPU output was byte-identical and matched the canonical expert/evaluation path within `1e-5`;
+- repeated CPU fixture output was byte-identical; the observed maximum absolute delta from the independent canonical expert/fusion calculation was exactly `0` (within `1e-5`);
 - explicit CPU and real `auto` produced SHA-256 `adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3`;
 - a separately profiled CPU process completed in 23.18 seconds (0.086 images/second including interpreter, validation, and model loading) with a peak observed working set of 466,698,240 bytes;
 - explicit unavailable CUDA exited with status 2 and published no output.
+
+The sampled-real parity batch was selected before scoring as the lexicographically first two filenames in each of the local SID_Set internal-validation `authentic` and `full-synthetic` directories. It is not organizer data. The ignored source-byte identities were:
+
+| SID_Set internal-validation identity | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `authentic/0002d5c6b40edcd4.jpg` | 147,109 | `238ac3d883867d9253b9f66953ccca969793b1644d08df53f907bf2c400c54c6` |
+| `authentic/00032d5bb63c29eb.jpg` | 136,504 | `4a7a351d5fff74295074834efbdad92b53d41754ed2bde70a9e0f3871abc4a5b` |
+| `full-synthetic/full_synthetic_000021.jpg` | 173,637 | `ed04d319ba8c9d4dd688393e2b10dbe0172deffc10f1ccb0d4387744384fa9b0` |
+| `full-synthetic/full_synthetic_000022.jpg` | 176,449 | `4e287901a8ecb69f783223e05d59af141f3d69e92bc3b7bc2a06c9c73cca835d` |
+
+On this four-image sampled-real batch, repeated CPU output was byte-identical at SHA-256 `21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2`; the observed maximum absolute parity delta was exactly `0` (within `1e-5`).
 
 The real Issue #7 receipt/bundle, 87,262,324-byte RGB checkpoint, and signal model remain ignored runtime artifacts; no weights, caches, labels, manifests, or image bytes are committed. This project records same-device evidence only.

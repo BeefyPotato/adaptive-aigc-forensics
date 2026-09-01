@@ -5,6 +5,7 @@ SUBMISSION_REAL_SIGNAL_MODEL to run this gate. No model or data bytes are checke
 """
 
 import json
+import hashlib
 import math
 import os
 import tempfile
@@ -71,7 +72,8 @@ class RealSubmissionInferenceTests(unittest.TestCase):
                 )
                 durations.append(time.perf_counter() - started)
             self.assertEqual(first.read_bytes(), second.read_bytes())
-            actual = json.loads(first.read_bytes())
+            first_bytes = first.read_bytes()
+            actual = json.loads(first_bytes)
 
         names = [path.relative_to(image_dir).as_posix() for path in paths]
         self.assertEqual([row["image_path"] for row in actual], names)
@@ -129,11 +131,17 @@ class RealSubmissionInferenceTests(unittest.TestCase):
             )
             expected.append(probability)
         tolerance = float(load_model_metadata()["numeric_tolerance"])
-        self.assertLessEqual(
-            max(abs(row["pred"] - value) for row, value in zip(actual, expected, strict=True)),
-            tolerance,
+        maximum_delta = max(
+            abs(row["pred"] - value)
+            for row, value in zip(actual, expected, strict=True)
         )
+        self.assertLessEqual(maximum_delta, tolerance)
         self.assertTrue(all(duration > 0 for duration in durations))
+        print(
+            "[submission-parity] "
+            f"images={len(actual)} max_abs_delta={maximum_delta:.17g} "
+            f"output_sha256={hashlib.sha256(first_bytes).hexdigest()}"
+        )
 
 
 if __name__ == "__main__":

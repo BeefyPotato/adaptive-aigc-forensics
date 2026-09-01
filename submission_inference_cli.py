@@ -6,39 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
-
-from rgb_expert import CommunityForensicsBackend
-from signal_expert import read_model_bundle
-from submission_inference import (
-    resolve_device,
-    run_submission,
-    validate_submission_artifacts,
-)
-
-
-class SignalModelBackend:
-    def __init__(self, path: Path, bundle: dict):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        self._model, validated = read_model_bundle(
-            path,
-            manifest_metadata=payload.get("manifest_metadata"),
-            expected_experiment_provenance=payload.get("experiment_provenance"),
-        )
-        provenance = bundle.get("provenance", {})
-        expected = {
-            "checkpoint_revision": provenance.get("signal_checkpoint_revision"),
-            "normalization_revision": provenance.get("signal_normalization_revision"),
-        }
-        if any(expected[key] is not None and validated.get(key) != value for key, value in expected.items()):
-            raise ValueError("Signal model does not match frozen bundle provenance.")
-        normalization = validated["normalization"]
-        self._mean = np.asarray(normalization["mean"], dtype=np.float64)
-        self._scale = np.asarray(normalization["scale"], dtype=np.float64)
-
-    def predict_logits(self, batch: np.ndarray) -> np.ndarray:
-        values = np.asarray(batch, dtype=np.float64)
-        return self._model.logits((values - self._mean) / self._scale)
+from submission_inference import run_submission_inference
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,33 +21,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _cuda_is_available() -> bool:
-    import torch
-
-    return bool(torch.cuda.is_available())
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        device = (
-            "cpu"
-            if args.device == "cpu"
-            else resolve_device(args.device, cuda_available=_cuda_is_available())
-        )
-        bundle = validate_submission_artifacts(
-            args.bundle_dir,
+        run_submission_inference(
+            args.image_dir,
+            frozen_generation_directory=args.bundle_dir,
             rgb_checkpoint=args.rgb_checkpoint,
             signal_model=args.signal_model,
-        )
-        rgb = CommunityForensicsBackend(args.rgb_checkpoint, resolution=384, device=device)
-        signal = SignalModelBackend(args.signal_model, bundle)
-        run_submission(
-            args.image_dir,
-            args.bundle_dir,
-            args.output,
-            rgb,
-            signal,
+            output_path=args.output,
+            device=args.device,
             batch_size=args.batch_size,
         )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
