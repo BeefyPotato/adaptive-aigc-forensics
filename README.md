@@ -302,3 +302,9 @@ Chrio Phee and Matt Tan contributed equally to the repository and project delive
 ## Attributions
 
 Dataset, upstream model, checkpoint, framework, and library attribution details are recorded in [`docs/submission/attributions.md`](docs/submission/attributions.md). The Community Forensics checkpoint is downloaded separately under its upstream terms; no third-party model weights or restricted dataset images are stored in this repository.
+
+## Public submission links
+
+- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics
+- YouTube demo URL: https://www.youtube.com/watch?v=hDQRTiwCYZo
+- Devpost project URL: https://devpost.com/software/adaptive-aigc-forensics

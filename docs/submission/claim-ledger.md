@@ -71,9 +71,9 @@ All performance rows below are **internal validation** and descriptive, not caus
 
 ## Public destination gates
 
-- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics — **HUMAN REQUIRED:** make the repository public and verify it while signed out.
-- YouTube demo URL: **HUMAN REQUIRED** after recording and upload.
-- Devpost project URL: **HUMAN REQUIRED** after submission publication.
+- Repository: https://github.com/BeefyPotato/adaptive-aigc-forensics
+- YouTube demo URL: https://www.youtube.com/watch?v=hDQRTiwCYZo
+- Devpost project URL: https://devpost.com/software/adaptive-aigc-forensics?ref_content=my-projects-tab&ref_feature=my_projects
 
 ## Human contribution record — required before publication
 
@@ -88,6 +88,6 @@ All performance rows below are **internal validation** and descriptive, not caus
 - [x] Record every generated result's candidate, scope, artifact JSON path, generation revision, bundle/manifest/checkpoint/output SHA-256 values, and repeated-output SHA-256.
 - [x] Mark each metric **internal validation** or organizer demonstration as applicable.
 - [ ] Make the GitHub repository public and verify it while signed out.
-- [ ] Record the public YouTube and Devpost URLs.
+- [x] Record the public YouTube and Devpost URLs.
 - [ ] Confirm all team-contribution rows with the people named.
 - [ ] Obtain owner approval before adding any project code license.
