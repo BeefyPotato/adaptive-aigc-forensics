@@ -1,0 +1,9 @@
+{
+  "bundle_revision": "static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179",
+  "bundle_sha256": "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2",
+  "completion_schema_version": "submission-evidence-completion-v1",
+  "evidence_generation_revision": "submission-evidence-generation-v1-b018d8f0326f8a9ed9945b52eda2dadeae659b3827268af69c38aa4c09e27cc1",
+  "evidence_sha256": "0c3ed99c9805a4d455502f446637f33d784f541536bb1445b75ef83c6c767f90",
+  "generation_revision": "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181",
+  "system_id": "learned-static-fusion"
+}
