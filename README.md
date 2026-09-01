@@ -1,13 +1,13 @@
 # Adaptive AIGC Forensics
 
-Adaptive AIGC Forensics estimates whether an image is AI-generated while making robustness under JPEG recompression, blur, resizing, noise, color changes, and cropping explicit. The submitted system combines a frozen RGB detector with a compact low-level signal model through **learned-static-fusion**.
+Adaptive AIGC Forensics estimates whether an image is AI-generated while making robustness under JPEG recompression, blur, resizing, noise, color changes, and cropping explicit. The submitted system combines a frozen RGB expert with a compact signal expert through **learned-static-fusion**.
 
 The predictor accepts an image directory and writes a deterministic JSON file with one confidence score per image.
 
 ## Architecture
 
 - **RGB expert:** the frozen 384-pixel Community Forensics model with 21,811,969 parameters. It supplies semantic and visual evidence from normalized RGB pixels.
-- **Signal expert:** a deterministic 26-value frequency/residual representation followed by a 26→16→1 tanh MLP with 449 trainable scalar parameters (416 + 16 + 16 + 1).
+- **Signal expert:** a deterministic 26-value signal representation of frequency and residual statistics followed by a 26→16→1 tanh MLP with 449 trainable scalar parameters (416 + 16 + 16 + 1).
 - **Learned static fusion:** calibrated expert logits combined at **0.677 RGB / 0.323 signal**. The allocation is fixed for every image.
 
 Both experts process the same decoded, orientation-corrected RGB observation. The runtime verifies the model, normalization, preprocessing, calibrator, and fusion bindings before constructing either expert.
@@ -81,6 +81,8 @@ These files are committed under `models/track5/`:
 | `models/track5/static-fallback-bundle.json` | `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2` |
 | `models/track5/static-fallback.complete.json` | `8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112` |
 
+The package is bound to frozen generation `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181` and the fusion-bundle hash shown above.
+
 The bundle contains aggregate calibration, fusion, evaluation, and provenance bindings. It does not contain source images, image paths, labels, per-image predictions, or third-party checkpoint bytes.
 
 ### 4. Run `submission_inference_cli.py`
@@ -132,6 +134,10 @@ The output is a JSON array whose records contain exactly `image_path` and `pred`
 ```
 
 `pred` is a finite probability in `[0, 1]` produced by learned static fusion. It is a model confidence, not a provenance verdict or an autonomous moderation decision. Detailed runtime behavior is documented in [submission inference](docs/submission-inference.md).
+
+### Verified compute profile
+
+The checked-in [runtime and parity record](docs/submission/runtime-smoke.json) covers a CPU-only Windows 11 environment with Python 3.12.10 and PyTorch 2.8.0; CUDA was unavailable and `auto` resolved to CPU. For two checked-in images at batch size 2, the separately profiled process took **23.18 seconds** including startup, model loading, and artifact validation (**0.086 images/second**) with a peak observed working set of **466,698,240 bytes**. Explicit CPU and `auto` outputs were byte-identical. The frozen RGB expert was not retrained; the `hackathon-v1` signal-expert run was CPU-based.
 
 ## Submission deliverables
 
@@ -218,9 +224,13 @@ Full experiment reproduction additionally requires Node.js 22, SID_Set under its
 python -m pip install --requirement requirements-signal.txt
 npm ci
 node ./scripts/download-sid-set-candidates.mjs
+node ./src/track5-cli.js build-manifest --inventory ./datasets/sid-set/inventory.jsonl --dataset-root ./datasets/sid-set/images --dataset-revision "saberzl/SID_Set@dc03ead57929879319ce30a82bfcfb8d317b10bd" --output-dir ./artifacts/track5-production
+node ./scripts/materialize-track5-observations.mjs --manifest ./artifacts/track5-production/track5-manifest.json --dataset-root ./datasets/sid-set/images --output-dir ./artifacts/track5-materialized --concurrency 4
 ```
 
-The source-level allocation contains **8,000 expert-training sources**, **2,000 fusion-training sources**, **2,000 internal-validation sources**, and **2,000 sealed-internal-test sources**. Source identities do not cross partitions.
+The source-level allocation contains **8,000 expert-training sources**, **2,000 fusion-training sources**, **2,000 internal-validation sources**, and **2,000 sealed-internal-test sources**. Source identities do not cross partitions. Selection rejects exact and perceptual matches across partitions and deterministically backfills from the pinned reserve without relaxing the split quotas.
+
+Preserve this sequence: source split and leakage audit; corruption materialization; frozen RGB scoring; signal-expert training; calibrator and static-weight fitting on fusion training; internal-validation candidate and threshold diagnostics; then report generation. The sealed internal test set and organizer demonstration set remain outside development decisions.
 
 The published `hackathon-v1` signal run used **8,064 training draws**, **400 validation sources**, and **8,000 validation observations**. Its frozen revisions are:
 

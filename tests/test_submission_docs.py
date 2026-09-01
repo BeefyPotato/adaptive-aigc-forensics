@@ -34,6 +34,9 @@ SIGNAL_CHECKPOINT_REVISION = (
 SIGNAL_NORMALIZATION_REVISION = (
     "signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80"
 )
+FUSION_GENERATION_REVISION = (
+    "static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181"
+)
 
 
 def _canonical_lf_bytes(path: Path) -> bytes:
@@ -136,6 +139,49 @@ class SubmissionReadmeTests(unittest.TestCase):
         self.assertIn("finite probability in `[0, 1]`", readme)
         self.assertIn("## Reproduce the reported results", readme)
         self.assertIn("## Limitations and future work", readme)
+
+    def test_readme_uses_domain_language_and_documents_compute_and_data_flow(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
+        demo = (ROOT / "docs/submission/demo-script.md").read_text(encoding="utf-8")
+        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
+
+        for term in (
+            "frozen RGB expert",
+            "compact signal expert",
+            "26-value signal representation",
+            "CPU-only",
+            "23.18 seconds",
+            "0.086 images/second",
+            "466,698,240 bytes",
+            "exact and perceptual",
+            "node ./src/track5-cli.js build-manifest",
+            "node ./scripts/materialize-track5-observations.mjs",
+            "signal-expert training",
+            "calibrator and static-weight fitting",
+        ):
+            self.assertIn(term, readme)
+        for avoided_term in (
+            "RGB detector",
+            "low-level signal model",
+            "frequency/residual representation",
+        ):
+            self.assertNotIn(avoided_term, readme)
+        for document in (readme, devpost, demo, ledger):
+            self.assertIn(FUSION_GENERATION_REVISION, document)
+
+        for ledger_binding in (
+            "26→16→1",
+            "416 + 16 + 16 + 1",
+            "8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112",
+            "metrics.corruption_families.jpeg.auroc",
+            "metrics.corruption_families.blur.auroc",
+            "metrics.corruption_families.resize.auroc",
+            "metrics.corruption_families.noise.auroc",
+            "metrics.corruption_families.color.auroc",
+            "metrics.corruption_families.crop.auroc",
+        ):
+            self.assertIn(ledger_binding, ledger)
 
     def test_readme_preserves_public_science_and_reproduction_context(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

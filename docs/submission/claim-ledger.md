@@ -11,10 +11,11 @@ This ledger is the release gate for public claims. A row is publishable only whe
 | Trusted generation | `static-fallback-generation-v2-67220d1f7a2329f2c9d68d306fd77cd6a19125c66bd313be5d3c85e4bd19f181` |
 | Trusted bundle revision | `static-fallback-bundle-v2-7e7422a210136e62258ac62ae5dd8447803203d5b35d281fa5ec6da029187179` |
 | Bundle SHA-256 | `9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2` |
+| Deployment completion receipt | `models/track5/static-fallback.complete.json` SHA-256 `8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112` |
 | Manifest SHA-256 | `c9ea2d3b616b37844d21602a95e5f90c824a692ad609d31bbe0b982c5f45228a` |
 | RGB checkpoint | revision `6076002bf0d9dd37537f965ee2f06f826c333b61`; SHA-256 `b89f36275f3bf5e2b040eee36597a8f19db051bff9a473a9cf7b2466284fb387` |
 | Signal checkpoint | profile `hackathon-v1`; revision `signal-checkpoint-v1-4a6b4d974722c9f8729a90d872387bb49e54d01e7bda98ddb69232c28604390e`; normalization revision `signal-normalization-v1-25b16b78f7ecb5e02572e03650537e8b5e266f2f3e49a911a2ae2e2e11d45e80`; model SHA-256 `cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5`; 8,064 training draws; 400 validation sources / 8,000 validation observations |
-| Model scale | RGB: 21,811,969 parameters (`config/community-forensics-models.json` → `models.384.parameter_count`); signal MLP: 449 trainable scalars (trusted signal model → `weights.input`, `weights.input_bias`, `weights.output`, `weights.output_bias`) |
+| Model scale | RGB: 21,811,969 parameters (`config/community-forensics-models.json` → `models.384.parameter_count`); signal MLP: 26→16→1 with 449 trainable scalars, decomposed as 416 + 16 + 16 + 1 (trusted signal model → `weights.input`, `weights.input_bias`, `weights.output`, `weights.output_bias`) |
 | Static weight | 0.677 RGB / 0.323 signal; revision `static-fusion-weight-v1-96456ffa07a98fc81ceef01f4cbae62a52b0c07fc1e71c4f5a06b5a06eef1c1b` |
 | Final accepted command | `python submission_inference_cli.py --image-dir <directory> --bundle-dir models/track5 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model models/track5/signal-model.json --output predictions.json --device auto --batch-size 8`; independently reviewed and accepted at Issue #10 commit `b8982dfb3400fa92fde65cc0ea6f2fe141a4b402`; `rgb_cli.py` is not a substitute |
 | Direct-output schema | JSON array whose records contain exactly `image_path` and `pred`; `pred` is finite and in `[0, 1]` |
@@ -41,6 +42,12 @@ All performance rows below are **internal validation** and descriptive, not caus
 | Public value | Evidence JSON and exact path |
 | --- | --- |
 | Clean AUROC `0.981975` | `docs/submission/evidence/submission-evidence.json` → `metrics.clean_auroc` |
+| JPEG family AUROC `0.965512` (six-decimal display of `0.9655125`) | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.jpeg.auroc` |
+| Blur family AUROC `0.975375` | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.blur.auroc` |
+| Resize family AUROC `0.962363` (six-decimal display of `0.9623625`) | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.resize.auroc` |
+| Noise family AUROC `0.883883` (six-decimal display of `0.8838833333333334`) | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.noise.auroc` |
+| Color family AUROC `0.975696` (six-decimal display of `0.9756958333333333`) | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.color.auroc` |
+| Crop family AUROC `0.977675` | `docs/submission/evidence/submission-evidence.json` → `metrics.corruption_families.crop.auroc` |
 | Mean transformed AUROC `0.9567506944444445` | `docs/submission/evidence/submission-evidence.json` → `metrics.mean_corrupted_auroc` |
 | All-condition macro AUROC `0.9603541666666667` | `docs/submission/evidence/submission-evidence.json` → `metrics.all_condition_macro_auroc` |
 | Worst condition `noise` / `sigma-0.1` / AUROC `0.810425` | `docs/submission/evidence/submission-evidence.json` → `metrics.worst_family_severity.family`, `metrics.worst_family_severity.severity`, `metrics.worst_family_severity.auroc` |
