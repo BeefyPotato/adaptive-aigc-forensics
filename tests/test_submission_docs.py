@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,10 +14,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_COMMAND = (
     "python submission_inference_cli.py --image-dir <directory> "
-    "--bundle-dir artifacts/issue-7-fusion-v2 "
+    "--bundle-dir models/track5 "
     "--rgb-checkpoint <community-forensics-384.safetensors> "
-    "--signal-model <signal-model.json> --output predictions.json "
+    "--signal-model models/track5/signal-model.json --output predictions.json "
     "--device auto --batch-size 8"
+)
+PUBLIC_README_COMMAND = (
+    "python submission_inference_cli.py --image-dir ./images "
+    "--bundle-dir ./models/track5 "
+    "--rgb-checkpoint <checkpoint-path-printed-above> "
+    "--signal-model ./models/track5/signal-model.json "
+    "--output ./predictions.json --device auto --batch-size 8"
 )
 ISSUE10_COMMIT = "b8982dfb3400fa92fde65cc0ea6f2fe141a4b402"
 SIGNAL_PROFILE = "hackathon-v1"
@@ -35,33 +43,101 @@ def _canonical_lf_bytes(path: Path) -> bytes:
 
 
 class SubmissionReadmeTests(unittest.TestCase):
-    def test_readme_publishes_the_accepted_fusion_cli_and_contract(self) -> None:
+    def test_public_deployment_artifacts_are_tracked_and_byte_exact(self) -> None:
+        expected_hashes = {
+            "models/track5/signal-model.json": (
+                "cc1e98788ef09036c916065aca1d5b62751357d9eeaba90f50fe2532b9351ab5"
+            ),
+            "models/track5/static-fallback-bundle.json": (
+                "9c80b66553d10a4fc66f443c45672434800efb0731dfe2ea59036757ba959cd2"
+            ),
+            "models/track5/static-fallback.complete.json": (
+                "8295d00d0275ee0c06423cd1c31d96e1a16671da21dae1a20aa4dda93ea94112"
+            ),
+        }
+
+        for relative_path, expected_hash in expected_hashes.items():
+            with self.subTest(relative_path=relative_path):
+                artifact = ROOT / relative_path
+                self.assertTrue(artifact.is_file(), f"missing public artifact: {relative_path}")
+                self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), expected_hash)
+                tracked = subprocess.run(
+                    ["git", "ls-files", "--error-unmatch", relative_path],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(tracked.returncode, 0, f"untracked public artifact: {relative_path}")
+
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+        self.assertIn("models/track5/*.json -text", attributes)
+
+    def test_receipt_bound_submission_artifacts_reproduce_from_checkout(self) -> None:
+        attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+        for pattern in (
+            "docs/submission/evidence/*.json -text",
+            "docs/submission/results/*.json -text",
+            "docs/submission/results/*.md -text",
+            "docs/submission/results/*.svg -text",
+        ):
+            self.assertIn(pattern, attributes)
+
+        expected_hashes = {
+            "robustness-and-errors.md": (
+                "9ab6378752417637d6ae3e24443c5c49aff498fbdae11b01f82a1267bf6f486b"
+            ),
+            "clean-vs-transformed.svg": (
+                "8163495995381f52fbccfd754cdb4c3aecfdd918949ee3d5fca0ad6c6fdef3f6"
+            ),
+            "submission-report.complete.json": (
+                "d84773233606bb6f32f3fd6d226155a80d1113ee87c166f3c34f1382190f3072"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_directory = Path(temporary_directory) / "results"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "submission_report.py"),
+                    str(ROOT / "docs/submission/evidence"),
+                    str(output_directory),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            for filename, expected_hash in expected_hashes.items():
+                with self.subTest(filename=filename):
+                    self.assertEqual(
+                        hashlib.sha256((output_directory / filename).read_bytes()).hexdigest(),
+                        expected_hash,
+                    )
+
+    def test_readme_has_a_clean_clone_inference_quick_start(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## Submission inference status", readme)
+        self.assertIn("## Quick start: run inference", readme)
         self.assertIn("learned-static-fusion", readme)
         self.assertIn("0.677 RGB / 0.323 signal", readme)
-        self.assertEqual(readme.count(CANONICAL_COMMAND), 1)
-        self.assertIn(ISSUE10_COMMIT, readme)
+        self.assertIn("git clone https://github.com/BeefyPotato/adaptive-aigc-forensics.git", readme)
+        self.assertIn("python -m venv .venv", readme)
+        self.assertIn("python -m pip install --requirement requirements-rgb.txt", readme)
+        self.assertIn("from rgb_expert import download_checkpoint", readme)
+        self.assertEqual(readme.count(PUBLIC_README_COMMAND), 1)
+        self.assertIn("models/track5/static-fallback-bundle.json", readme)
+        self.assertIn("models/track5/static-fallback.complete.json", readme)
+        self.assertIn("models/track5/signal-model.json", readme)
         self.assertIn("JSON array", readme)
-        self.assertIn("exactly this per-image schema", readme)
         self.assertIn('"image_path": "relative/path/to/image.png"', readme)
         self.assertIn('"pred": 0.73', readme)
         self.assertIn("finite probability in `[0, 1]`", readme)
-        self.assertIn("## Setup", readme)
-        self.assertIn("## Training, calibration, and reporting order", readme)
-        self.assertIn("## Limitations and improvements", readme)
-        self.assertIn("## Contributions", readme)
-        self.assertIn("docs/submission/claim-ledger.md", readme)
-        self.assertIn(
-            "training, calibration, any selection, weights, thresholds, templates, or narrative",
-            readme,
-        )
-        self.assertNotIn("current raw-RGB candidate", readme)
-        self.assertNotIn("sole public inference command", readme)
-        self.assertNotIn("python rgb_cli.py --input-dir ./images --output ./predictions.json", readme)
+        self.assertIn("## Reproduce the reported results", readme)
+        self.assertIn("## Limitations and future work", readme)
 
-    def test_readme_discloses_scale_splits_compute_and_reproduction(self) -> None:
+    def test_readme_preserves_public_science_and_reproduction_context(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         model_config = json.loads((ROOT / "config/community-forensics-models.json").read_text("utf-8"))
 
@@ -75,22 +151,22 @@ class SubmissionReadmeTests(unittest.TestCase):
             "2,000 fusion-training sources",
             "2,000 internal-validation sources",
             "2,000 sealed-internal-test sources",
-            "23.18 seconds",
-            "466,698,240 bytes",
-            "adcd0528bd98130421385fd7d579ea8ba4ae6aa773f1c4b6e90504a2c749c1b3",
-            "21bbd744c94927e674bd9f40b3f56c9ac3188580b49b2d32869cb576e65dd2c2",
-            "independently reviewed",
             SIGNAL_PROFILE,
             "8,064 training draws",
             "400 validation sources",
             "8,000 validation observations",
             SIGNAL_CHECKPOINT_REVISION,
             SIGNAL_NORMALIZATION_REVISION,
+            "0.981975",
+            "0.9567506944444445",
+            "0.9603541666666667",
+            "noise / sigma-0.1 / 0.810425",
         ):
             self.assertIn(disclosure, readme)
         for command in (
-            "python submission_evidence.py --generation-dir ./artifacts/issue-7-fusion-v2",
-            "python submission_report.py ./artifacts/submission-reproduction/evidence "
+            "New-Item -ItemType Directory -Force ./artifacts/submission-reproduction",
+            "mkdir -p ./artifacts/submission-reproduction",
+            "python submission_report.py ./docs/submission/evidence "
             "./artifacts/submission-reproduction/results",
             'python -m unittest discover -s tests -p "test*.py" -v',
             "npm test",
@@ -98,20 +174,43 @@ class SubmissionReadmeTests(unittest.TestCase):
             self.assertIn(command, readme)
         self.assertNotIn("npm run verify", readme)
 
-    def test_publication_links_keep_only_human_actions_open(self) -> None:
+    def test_readme_is_public_facing_and_lists_submission_deliverables(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
-        ledger = (ROOT / "docs/submission/claim-ledger.md").read_text(encoding="utf-8")
 
-        for document in (readme, devpost, ledger):
-            self.assertIn("https://github.com/BeefyPotato/adaptive-aigc-forensics", document)
-            self.assertIn("HUMAN REQUIRED", document)
-            self.assertIn("YouTube", document)
-            self.assertIn("Devpost", document)
-        self.assertIn("make the repository public", readme)
-        self.assertIn("_Unassigned — do not infer_", ledger)
+        self.assertIn("## Submission deliverables", readme)
+        for relative_path in (
+            "submission_inference_cli.py",
+            "submission_inference.py",
+            "models/track5/signal-model.json",
+            "models/track5/static-fallback-bundle.json",
+            "models/track5/static-fallback.complete.json",
+            "docs/submission/evidence/submission-evidence.json",
+            "docs/submission/evidence/submission-evidence.complete.json",
+            "docs/submission/results/robustness-and-errors.md",
+            "docs/submission/results/clean-vs-transformed.svg",
+            "docs/submission/results/submission-report.complete.json",
+            "docs/submission/devpost.md",
+            "docs/submission/demo-script.md",
+            "docs/submission/attributions.md",
+            "docs/submission/claim-ledger.md",
+            "docs/submission/runtime-smoke.json",
+        ):
+            self.assertIn(relative_path, readme)
 
-        devpost = (ROOT / "docs/submission/devpost.md").read_text(encoding="utf-8")
+        for internal_phrase in (
+            "Issue #",
+            "HUMAN REQUIRED",
+            "release gate",
+            "independently reviewed",
+            "accepted commit",
+            "accepted command",
+            "time-boxed",
+            "make the repository public",
+            "do not infer",
+        ):
+            self.assertNotIn(internal_phrase, readme)
+
         for document in (readme, devpost):
             for result in (
                 "768/1218 = 0.6305418719211823",
@@ -169,7 +268,9 @@ class SubmissionPackageTests(unittest.TestCase):
         devpost = (ROOT / "docs" / "submission" / "devpost.md").read_text(encoding="utf-8")
         ledger = (ROOT / "docs" / "submission" / "claim-ledger.md").read_text(encoding="utf-8")
 
-        for document in (readme, devpost, ledger):
+        self.assertIn("learned-static-fusion", readme)
+        self.assertIn(PUBLIC_README_COMMAND, readme)
+        for document in (devpost, ledger):
             self.assertIn("learned-static-fusion", document)
             self.assertIn(CANONICAL_COMMAND, document)
             self.assertIn(ISSUE10_COMMIT, document)

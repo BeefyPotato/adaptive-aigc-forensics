@@ -11,7 +11,7 @@ The 21,811,969-parameter RGB expert uses the immutable Community Forensics 384 c
 Static fusion uses one trust allocation for every condition. The per-image degradation gate remains a separate research component and is not part of this selected design. The independently reviewed Issue #10 interface at commit `b8982dfb3400fa92fde65cc0ea6f2fe141a4b402` emits exactly `{ "image_path": string, "pred": number }`, where `pred` is finite and from 0 to 1:
 
 ```shell
-python submission_inference_cli.py --image-dir <directory> --bundle-dir artifacts/issue-7-fusion-v2 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model <signal-model.json> --output predictions.json --device auto --batch-size 8
+python submission_inference_cli.py --image-dir <directory> --bundle-dir models/track5 --rgb-checkpoint <community-forensics-384.safetensors> --signal-model models/track5/signal-model.json --output predictions.json --device auto --batch-size 8
 ```
 
 ## Development tools
